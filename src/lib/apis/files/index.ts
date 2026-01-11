@@ -1,26 +1,16 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 import { splitStream } from '$lib/utils';
 
-export const uploadFile = async (
-	token: string,
-	file: File,
-	metadata?: object | null,
-	process?: boolean | null
-) => {
+export const uploadFile = async (token: string, file: File, metadata?: object | null) => {
 	const data = new FormData();
 	data.append('file', file);
 	if (metadata) {
 		data.append('metadata', JSON.stringify(metadata));
 	}
 
-	const searchParams = new URLSearchParams();
-	if (process !== undefined && process !== null) {
-		searchParams.append('process', String(process));
-	}
-
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/files/?${searchParams.toString()}`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/files/`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',
@@ -252,7 +242,7 @@ export const getFileContentById = async (id: string) => {
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
-			return await res.arrayBuffer();
+			return await res.blob();
 		})
 		.catch((err) => {
 			error = err.detail;
