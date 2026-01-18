@@ -10,13 +10,11 @@
 [![Discord](https://img.shields.io/badge/Discord-Open_WebUI-blue?logo=discord&logoColor=white)](https://discord.gg/5rJgQTnV4s)
 [![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/tjbck)
 
-![Open WebUI Banner](./banner.png)
-
 **Open WebUI is an [extensible](https://docs.openwebui.com/features/plugin/), feature-rich, and user-friendly self-hosted AI platform designed to operate entirely offline.** It supports various LLM runners like **Ollama** and **OpenAI-compatible APIs**, with **built-in inference engine** for RAG, making it a **powerful AI deployment solution**.
 
 Passionate about open-source AI? [Join our team →](https://careers.openwebui.com/)
 
-![Open WebUI Demo](./demo.png)
+![Open WebUI Demo](./demo.gif)
 
 > [!TIP]  
 > **Looking for an [Enterprise Plan](https://docs.openwebui.com/enterprise)?** – **[Speak with Our Sales Team Today!](https://docs.openwebui.com/enterprise)**
@@ -190,6 +188,14 @@ docker run -d --network=host -v open-webui:/app/backend/data -e OLLAMA_BASE_URL=
 
 ### Keeping Your Docker Installation Up-to-Date
 
+In case you want to update your local Docker installation to the latest version, you can do it with [Watchtower](https://containrrr.dev/watchtower/):
+
+```bash
+docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock containrrr/watchtower --run-once open-webui
+```
+
+In the last part of the command, replace `open-webui` with your container name if it is different.
+
 Check our Updating Guide available in our [Open WebUI Documentation](https://docs.openwebui.com/getting-started/updating).
 
 ### Using the Dev Branch 🌙
@@ -237,3 +243,180 @@ If you have any questions, suggestions, or need assistance, please open an issue
 ---
 
 Created by [Timothy Jaeryang Baek](https://github.com/tjbck) - Let's make Open WebUI even more amazing together! 💪
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-06 13:53:36`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-07 09:41:09`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-08 09:25:27`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-09 09:25:03`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-10 09:26:44`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-11 09:27:39`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-12 09:27:11`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-13 09:22:38`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-14 09:41:36`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-15 09:39:52`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-16 09:28:09`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-17 09:23:22`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-18 09:24:02`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-19 09:27:07`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-20 09:23:08`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-21 09:41:47`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-22 09:40:51`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-23 09:27:25`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-24 09:26:27`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-25 09:27:35`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-26 09:27:29`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-27 09:25:44`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-28 09:46:02`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-29 09:44:45`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-30 09:28:01`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2025-12-31 09:28:50`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-01 09:47:25`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-02 09:39:23`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-03 09:25:00`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-04 09:47:28`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-05 09:47:25`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-06 09:39:23`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-07 09:39:17`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-08 09:39:24`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-09 09:39:43`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-10 09:27:26`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-11 09:47:31`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-12 09:44:07`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-13 09:26:46`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-14 09:47:19`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-15 09:28:27`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-16 09:40:08`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-17 09:26:42`*
+
+
+---
+*由 GitHub Actions 自动同步于北京时间：`2026-01-18 09:46:08`*
+

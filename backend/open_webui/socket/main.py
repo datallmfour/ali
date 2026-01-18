@@ -47,11 +47,13 @@ from open_webui.utils.access_control import has_access, get_users_with_access
 
 from open_webui.env import (
     GLOBAL_LOG_LEVEL,
+    SRC_LOG_LEVELS,
 )
 
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["SOCKET"])
 
 
 REDIS = None
@@ -246,13 +248,7 @@ def get_user_ids_from_room(room):
     active_session_ids = get_session_ids_from_room(room)
 
     active_user_ids = list(
-        set(
-            [
-                SESSION_POOL.get(session_id)["id"]
-                for session_id in active_session_ids
-                if SESSION_POOL.get(session_id) is not None
-            ]
-        )
+        set([SESSION_POOL.get(session_id)["id"] for session_id in active_session_ids])
     )
     return active_user_ids
 

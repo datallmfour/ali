@@ -871,9 +871,7 @@ export const processDetails = (content) => {
 				attributes[attributeMatch[1]] = attributeMatch[2];
 			}
 
-			if (attributes.result) {
-				content = content.replace(match, `"${attributes.result}"`);
-			}
+			content = content.replace(match, `"${attributes.result}"`);
 		}
 	}
 
@@ -894,8 +892,8 @@ export const extractSentences = (text: string) => {
 		return placeholder;
 	});
 
-	// Split the modified text into sentences based on common punctuation marks or newlines, avoiding these blocks
-	let sentences = text.split(/(?<=[.!?])\s+|\n+/);
+	// Split the modified text into sentences based on common punctuation marks, avoiding these blocks
+	let sentences = text.split(/(?<=[.!?])\s+/);
 
 	// Restore code blocks and process sentences
 	sentences = sentences.map((sentence) => {
@@ -1249,11 +1247,6 @@ function resolveSchema(schemaRef, components, resolvedSchemas = new Set()) {
 export const convertOpenApiToToolPayload = (openApiSpec) => {
 	const toolPayload = [];
 
-	// Guard against invalid or non-OpenAPI specs (e.g., MCP-style configs)
-	if (!openApiSpec || !openApiSpec.paths) {
-		return toolPayload;
-	}
-
 	for (const [path, methods] of Object.entries(openApiSpec.paths)) {
 		for (const [method, operation] of Object.entries(methods)) {
 			if (operation?.operationId) {
@@ -1524,29 +1517,12 @@ export const extractContentFromFile = async (file: File) => {
 		});
 	}
 
-	async function extractDocxText(file: File) {
-		const [arrayBuffer, { default: mammoth }] = await Promise.all([
-			file.arrayBuffer(),
-			import('mammoth')
-		]);
-		const result = await mammoth.extractRawText({ arrayBuffer });
-		return result.value; // plain text
-	}
-
 	const type = file.type || '';
 	const ext = getExtension(file.name);
 
 	// PDF check
 	if (type === 'application/pdf' || ext === '.pdf') {
 		return await extractPdfText(file);
-	}
-
-	// DOCX check
-	if (
-		type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-		ext === '.docx'
-	) {
-		return await extractDocxText(file);
 	}
 
 	// Text check (plain or common text-based)
