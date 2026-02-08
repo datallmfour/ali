@@ -120,10 +120,7 @@
 			if (type === 'message') {
 				if ((data?.parent_id ?? null) === null) {
 					const tempId = data?.temp_id ?? null;
-					messages = [
-						{ ...data, temp_id: null },
-						...messages.filter((m) => !tempId || m?.temp_id !== tempId)
-					];
+					messages = [{ ...data, temp_id: null }, ...messages.filter((m) => m?.temp_id !== tempId)];
 
 					if (typingUsers.find((user) => user.id === event.user.id)) {
 						typingUsers = typingUsers.filter((user) => user.id !== event.user.id);
@@ -293,7 +290,7 @@
 
 <div
 	class="h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
-		? 'md:max-w-[calc(100%-var(--sidebar-width))]'
+		? 'md:max-w-[calc(100%-260px)]'
 		: ''} w-full max-w-full flex flex-col"
 	id="channel-container"
 >
@@ -368,7 +365,6 @@
 						bind:chatInputElement
 						bind:replyToMessage
 						{typingUsers}
-						{channel}
 						userSuggestions={true}
 						channelSuggestions={true}
 						disabled={!channel?.write_access}

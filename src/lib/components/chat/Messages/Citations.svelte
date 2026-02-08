@@ -1,14 +1,11 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { embed, showControls, showEmbeds } from '$lib/stores';
-
 	import CitationModal from './Citations/CitationModal.svelte';
+	import { embed, showControls, showEmbeds } from '$lib/stores';
 
 	const i18n = getContext('i18n');
 
 	export let id = '';
-	export let chatId = '';
-
 	export let sources = [];
 	export let readOnly = false;
 
@@ -23,26 +20,12 @@
 
 	let selectedCitation: any = null;
 
-	export const showSourceModal = (sourceId) => {
-		let index;
-		let suffix = null;
+	export const showSourceModal = (sourceIdx) => {
+		if (citations[sourceIdx]) {
+			console.log('Showing citation modal for:', citations[sourceIdx]);
 
-		if (typeof sourceId === 'string') {
-			const output = sourceId.split('#');
-			index = parseInt(output[0]) - 1;
-
-			if (output.length > 1) {
-				suffix = output[1];
-			}
-		} else {
-			index = sourceId - 1;
-		}
-
-		if (citations[index]) {
-			console.log('Showing citation modal for:', citations[index]);
-
-			if (citations[index]?.source?.embed_url) {
-				const embedUrl = citations[index].source.embed_url;
+			if (citations[sourceIdx]?.source?.embed_url) {
+				const embedUrl = citations[sourceIdx].source.embed_url;
 				if (embedUrl) {
 					if (readOnly) {
 						// Open in new tab if readOnly
@@ -52,20 +35,16 @@
 						showControls.set(true);
 						showEmbeds.set(true);
 						embed.set({
-							url: embedUrl,
-							title: citations[index]?.source?.name || 'Embedded Content',
-							source: citations[index],
-							chatId: chatId,
-							messageId: id,
-							sourceId: sourceId
+							title: citations[sourceIdx]?.source?.name || 'Embedded Content',
+							url: embedUrl
 						});
 					}
 				} else {
-					selectedCitation = citations[index];
+					selectedCitation = citations[sourceIdx];
 					showCitationModal = true;
 				}
 			} else {
-				selectedCitation = citations[index];
+				selectedCitation = citations[sourceIdx];
 				showCitationModal = true;
 			}
 		}
