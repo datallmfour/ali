@@ -14,6 +14,7 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
+	import { getUserById } from '$lib/apis/users';
 	import User from '$lib/components/icons/User.svelte';
 	import UserProfileImage from './Account/UserProfileImage.svelte';
 
@@ -108,17 +109,10 @@
 
 		webhookUrl = $settings?.notifications?.webhook_url ?? '';
 
-		// Only fetch API key if the feature is enabled and user has permission
-		if (
-			user &&
-			($config?.features?.enable_api_keys ?? true) &&
-			(user?.role === 'admin' || (user?.permissions?.features?.api_keys ?? false))
-		) {
-			APIKey = await getAPIKey(localStorage.token).catch((error) => {
-				console.log(error);
-				return '';
-			});
-		}
+		APIKey = await getAPIKey(localStorage.token).catch((error) => {
+			console.log(error);
+			return '';
+		});
 
 		loaded = true;
 	});

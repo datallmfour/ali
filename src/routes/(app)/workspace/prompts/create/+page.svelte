@@ -10,11 +10,10 @@
 	import PromptEditor from '$lib/components/workspace/Prompts/PromptEditor.svelte';
 
 	let prompt: {
-		name: string;
+		title: string;
 		command: string;
 		content: string;
-		tags: string[];
-		access_grants: any[];
+		access_control: any | null;
 	} | null = null;
 
 	let clone = false;
@@ -35,9 +34,8 @@
 
 	onMount(async () => {
 		window.addEventListener('message', async (event) => {
-			console.log(event);
 			if (
-				!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:9999'].includes(
+				!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:5173'].includes(
 					event.origin
 				)
 			)
@@ -47,11 +45,10 @@
 
 			clone = true;
 			prompt = {
-				name: _prompt.name || _prompt.title || 'Prompt',
+				title: _prompt.title,
 				command: _prompt.command,
 				content: _prompt.content,
-				tags: _prompt.tags || [],
-				access_grants: _prompt.access_grants !== undefined ? _prompt.access_grants : []
+				access_control: null
 			};
 		});
 
@@ -67,11 +64,10 @@
 
 			clone = true;
 			prompt = {
-				name: _prompt.name || _prompt.title || 'Prompt',
+				title: _prompt.title,
 				command: _prompt.command,
 				content: _prompt.content,
-				tags: _prompt.tags || [],
-				access_grants: _prompt.access_grants !== undefined ? _prompt.access_grants : []
+				access_control: null
 			};
 		}
 	});

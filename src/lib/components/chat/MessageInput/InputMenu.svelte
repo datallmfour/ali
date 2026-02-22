@@ -4,7 +4,7 @@
 	import { fly } from 'svelte/transition';
 	import { flyAndScale } from '$lib/utils/transitions';
 
-	import { config, user, tools as _tools, mobile, knowledge } from '$lib/stores';
+	import { config, user, tools as _tools, mobile, knowledge, chats } from '$lib/stores';
 	import { getKnowledgeBases } from '$lib/apis/knowledge';
 
 	import { createPicker } from '$lib/utils/google-drive-picker';
@@ -72,6 +72,16 @@
 			inputFilesHandler(inputFiles);
 		}
 	};
+
+	const init = async () => {
+		if ($knowledge === null) {
+			await knowledge.set(await getKnowledgeBases(localStorage.token));
+		}
+	};
+
+	$: if (show) {
+		init();
+	}
 
 	const onSelect = (item) => {
 		if (files.find((f) => f.id === item.id)) {
@@ -239,65 +249,69 @@
 						</Tooltip>
 					{/if}
 
-					<Tooltip
-						content={fileUploadCapableModels.length !== selectedModels.length
-							? $i18n.t('Model(s) do not support file upload')
-							: !fileUploadEnabled
-								? $i18n.t('You do not have permission to upload files.')
-								: ''}
-						className="w-full"
-					>
-						<button
-							class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
-								? 'opacity-50'
-								: ''}"
-							on:click={() => {
-								tab = 'knowledge';
-							}}
+					{#if ($knowledge ?? []).length > 0}
+						<Tooltip
+							content={fileUploadCapableModels.length !== selectedModels.length
+								? $i18n.t('Model(s) do not support file upload')
+								: !fileUploadEnabled
+									? $i18n.t('You do not have permission to upload files.')
+									: ''}
+							className="w-full"
 						>
-							<Database />
+							<button
+								class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
+									? 'opacity-50'
+									: ''}"
+								on:click={() => {
+									tab = 'knowledge';
+								}}
+							>
+								<Database />
 
-							<div class="flex items-center w-full justify-between">
-								<div class=" line-clamp-1">
-									{$i18n.t('Attach Knowledge')}
+								<div class="flex items-center w-full justify-between">
+									<div class=" line-clamp-1">
+										{$i18n.t('Attach Knowledge')}
+									</div>
+
+									<div class="text-gray-500">
+										<ChevronRight />
+									</div>
 								</div>
+							</button>
+						</Tooltip>
+					{/if}
 
-								<div class="text-gray-500">
-									<ChevronRight />
-								</div>
-							</div>
-						</button>
-					</Tooltip>
-
-					<Tooltip
-						content={fileUploadCapableModels.length !== selectedModels.length
-							? $i18n.t('Model(s) do not support file upload')
-							: !fileUploadEnabled
-								? $i18n.t('You do not have permission to upload files.')
-								: ''}
-						className="w-full"
-					>
-						<button
-							class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
-								? 'opacity-50'
-								: ''}"
-							on:click={() => {
-								tab = 'chats';
-							}}
+					{#if ($chats ?? []).length > 0}
+						<Tooltip
+							content={fileUploadCapableModels.length !== selectedModels.length
+								? $i18n.t('Model(s) do not support file upload')
+								: !fileUploadEnabled
+									? $i18n.t('You do not have permission to upload files.')
+									: ''}
+							className="w-full"
 						>
-							<ClockRotateRight />
+							<button
+								class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
+									? 'opacity-50'
+									: ''}"
+								on:click={() => {
+									tab = 'chats';
+								}}
+							>
+								<ClockRotateRight />
 
-							<div class="flex items-center w-full justify-between">
-								<div class=" line-clamp-1">
-									{$i18n.t('Reference Chats')}
-								</div>
+								<div class="flex items-center w-full justify-between">
+									<div class=" line-clamp-1">
+										{$i18n.t('Reference Chats')}
+									</div>
 
-								<div class="text-gray-500">
-									<ChevronRight />
+									<div class="text-gray-500">
+										<ChevronRight />
+									</div>
 								</div>
-							</div>
-						</button>
-					</Tooltip>
+							</button>
+						</Tooltip>
+					{/if}
 
 					{#if fileUploadEnabled}
 						{#if $config?.features?.enable_google_drive_integration}

@@ -51,6 +51,8 @@ from open_webui.config import (
     PGVECTOR_USE_HALFVEC,
 )
 
+from open_webui.env import SRC_LOG_LEVELS
+
 VECTOR_LENGTH = PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH
 USE_HALFVEC = PGVECTOR_USE_HALFVEC
 
@@ -59,6 +61,7 @@ VECTOR_OPCLASS = "halfvec_cosine_ops" if USE_HALFVEC else "vector_cosine_ops"
 Base = declarative_base()
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 
 def pgcrypto_encrypt(val, key):
@@ -89,9 +92,9 @@ class PgvectorClient(VectorDBBase):
 
         # if no pgvector uri, use the existing database connection
         if not PGVECTOR_DB_URL:
-            from open_webui.internal.db import ScopedSession
+            from open_webui.internal.db import Session
 
-            self.session = ScopedSession
+            self.session = Session
         else:
             if isinstance(PGVECTOR_POOL_SIZE, int):
                 if PGVECTOR_POOL_SIZE > 0:
@@ -120,26 +123,34 @@ class PgvectorClient(VectorDBBase):
             # Ensure the pgvector extension is available
             # Use a conditional check to avoid permission issues on Azure PostgreSQL
             if PGVECTOR_CREATE_EXTENSION:
-                self.session.execute(text("""
+                self.session.execute(
+                    text(
+                        """
                     DO $$
                     BEGIN
                     IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
                         CREATE EXTENSION IF NOT EXISTS vector;
                     END IF;
                     END $$;
-                """))
+                """
+                    )
+                )
 
             if PGVECTOR_PGCRYPTO:
                 # Ensure the pgcrypto extension is available for encryption
                 # Use a conditional check to avoid permission issues on Azure PostgreSQL
-                self.session.execute(text("""
+                self.session.execute(
+                    text(
+                        """
                     DO $$
                     BEGIN
                        IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') THEN
                           CREATE EXTENSION IF NOT EXISTS pgcrypto;
                        END IF;
                     END $$;
-                """))
+                """
+                    )
+                )
 
                 if not PGVECTOR_PGCRYPTO_KEY:
                     raise ValueError(
@@ -207,13 +218,15 @@ class PgvectorClient(VectorDBBase):
     def _ensure_vector_index(self, index_method: str, index_options: str) -> None:
         index_name = "idx_document_chunk_vector"
         existing_index_def = self.session.execute(
-            text("""
+            text(
+                """
                 SELECT indexdef
                 FROM pg_indexes
                 WHERE schemaname = current_schema()
                   AND tablename = 'document_chunk'
                   AND indexname = :index_name
-                """),
+                """
+            ),
             {"index_name": index_name},
         ).scalar()
 
@@ -299,7 +312,8 @@ class PgvectorClient(VectorDBBase):
                     # Ensure metadata is converted to its JSON text representation
                     json_metadata = json.dumps(item["metadata"])
                     self.session.execute(
-                        text("""
+                        text(
+                            """
                             INSERT INTO document_chunk
                             (id, vector, collection_name, text, vmetadata)
                             VALUES (
@@ -308,7 +322,8 @@ class PgvectorClient(VectorDBBase):
                                 pgp_sym_encrypt(:metadata_text, :key)
                             )
                             ON CONFLICT (id) DO NOTHING
-                        """),
+                        """
+                        ),
                         {
                             "id": item["id"],
                             "vector": vector,
@@ -350,7 +365,8 @@ class PgvectorClient(VectorDBBase):
                     vector = self.adjust_vector_length(item["vector"])
                     json_metadata = json.dumps(item["metadata"])
                     self.session.execute(
-                        text("""
+                        text(
+                            """
                             INSERT INTO document_chunk
                             (id, vector, collection_name, text, vmetadata)
                             VALUES (
@@ -363,7 +379,8 @@ class PgvectorClient(VectorDBBase):
                               collection_name = EXCLUDED.collection_name,
                               text = EXCLUDED.text,
                               vmetadata = EXCLUDED.vmetadata
-                        """),
+                        """
+                        ),
                         {
                             "id": item["id"],
                             "vector": vector,
@@ -412,8 +429,7 @@ class PgvectorClient(VectorDBBase):
         self,
         collection_name: str,
         vectors: List[List[float]],
-        filter: Optional[Dict[str, Any]] = None,
-        limit: int = 10,
+        limit: Optional[int] = None,
     ) -> Optional[SearchResult]:
         try:
             if not vectors:
@@ -461,47 +477,9 @@ class PgvectorClient(VectorDBBase):
             )
 
             # Build the lateral subquery for each query vector
-            where_clauses = [DocumentChunk.collection_name == collection_name]
-
-            # Apply metadata filter if provided
-            if filter:
-                for key, value in filter.items():
-                    if isinstance(value, dict) and "$in" in value:
-                        # Handle $in operator: {"field": {"$in": [values]}}
-                        in_values = value["$in"]
-                        if PGVECTOR_PGCRYPTO:
-                            where_clauses.append(
-                                pgcrypto_decrypt(
-                                    DocumentChunk.vmetadata,
-                                    PGVECTOR_PGCRYPTO_KEY,
-                                    JSONB,
-                                )[key].astext.in_([str(v) for v in in_values])
-                            )
-                        else:
-                            where_clauses.append(
-                                DocumentChunk.vmetadata[key].astext.in_(
-                                    [str(v) for v in in_values]
-                                )
-                            )
-                    else:
-                        # Handle simple equality: {"field": "value"}
-                        if PGVECTOR_PGCRYPTO:
-                            where_clauses.append(
-                                pgcrypto_decrypt(
-                                    DocumentChunk.vmetadata,
-                                    PGVECTOR_PGCRYPTO_KEY,
-                                    JSONB,
-                                )[key].astext
-                                == str(value)
-                            )
-                        else:
-                            where_clauses.append(
-                                DocumentChunk.vmetadata[key].astext == str(value)
-                            )
-
             subq = (
                 select(*result_fields)
-                .where(*where_clauses)
+                .where(DocumentChunk.collection_name == collection_name)
                 .order_by(
                     (DocumentChunk.vector.cosine_distance(query_vectors.c.q_vector))
                 )

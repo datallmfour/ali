@@ -73,7 +73,6 @@
 						<!-- {$i18n.t('New Chat')} -->
 						<!-- {$i18n.t('New Temporary Chat')} -->
 						<!-- {$i18n.t('Delete Chat')} -->
-						<!-- {$i18n.t('Open Model Selector')} -->
 						<!-- {$i18n.t('Search')} -->
 						<!-- {$i18n.t('Open Settings')} -->
 						<!-- {$i18n.t('Show Shortcuts')} -->

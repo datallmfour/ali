@@ -1,5 +1,12 @@
 <script>
-	import Analytics from '$lib/components/admin/Analytics.svelte';
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+
+	import Evaluations from '$lib/components/admin/Evaluations.svelte';
+
+	onMount(() => {
+		goto('/admin/evaluations/leaderboard');
+	});
 </script>
 
-<Analytics />
+<Evaluations />

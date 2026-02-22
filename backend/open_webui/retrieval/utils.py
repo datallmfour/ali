@@ -12,10 +12,7 @@ import re
 
 from urllib.parse import quote
 from huggingface_hub import snapshot_download
-from langchain_classic.retrievers import (
-    ContextualCompressionRetriever,
-    EnsembleRetriever,
-)
+from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 
@@ -29,9 +26,9 @@ from open_webui.models.knowledge import Knowledges
 
 from open_webui.models.chats import Chats
 from open_webui.models.notes import Notes
-from open_webui.models.access_grants import AccessGrants
 
 from open_webui.retrieval.vector.main import GetResult
+from open_webui.utils.access_control import has_access
 from open_webui.utils.headers import include_user_info_headers
 from open_webui.utils.misc import get_message_list
 
@@ -40,10 +37,9 @@ from open_webui.retrieval.loaders.youtube import YoutubeLoader
 
 
 from open_webui.env import (
-    AIOHTTP_CLIENT_TIMEOUT,
+    SRC_LOG_LEVELS,
     OFFLINE_MODE,
     ENABLE_FORWARD_USER_INFO_HEADERS,
-    AIOHTTP_CLIENT_SESSION_SSL,
 )
 from open_webui.config import (
     RAG_EMBEDDING_QUERY_PREFIX,
@@ -52,6 +48,7 @@ from open_webui.config import (
 )
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 
 from typing import Any
@@ -597,14 +594,9 @@ async def agenerate_openai_batch_embeddings(
         if ENABLE_FORWARD_USER_INFO_HEADERS and user:
             headers = include_user_info_headers(headers, user)
 
-        async with aiohttp.ClientSession(
-            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
-        ) as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.post(
-                f"{url}/embeddings",
-                headers=headers,
-                json=form_data,
-                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                f"{url}/embeddings", headers=headers, json=form_data
             ) as r:
                 r.raise_for_status()
                 data = await r.json()
@@ -691,15 +683,8 @@ async def agenerate_azure_openai_batch_embeddings(
         if ENABLE_FORWARD_USER_INFO_HEADERS and user:
             headers = include_user_info_headers(headers, user)
 
-        async with aiohttp.ClientSession(
-            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
-        ) as session:
-            async with session.post(
-                full_url,
-                headers=headers,
-                json=form_data,
-                ssl=AIOHTTP_CLIENT_SESSION_SSL,
-            ) as r:
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            async with session.post(full_url, headers=headers, json=form_data) as r:
                 r.raise_for_status()
                 data = await r.json()
                 if "data" in data:
@@ -774,14 +759,9 @@ async def agenerate_ollama_batch_embeddings(
         if ENABLE_FORWARD_USER_INFO_HEADERS and user:
             headers = include_user_info_headers(headers, user)
 
-        async with aiohttp.ClientSession(
-            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
-        ) as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.post(
-                f"{url}/api/embed",
-                headers=headers,
-                json=form_data,
-                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                f"{url}/api/embed", headers=headers, json=form_data
             ) as r:
                 r.raise_for_status()
                 data = await r.json()
@@ -810,9 +790,7 @@ def get_embedding_function(
             return await asyncio.to_thread(
                 (
                     lambda query, prefix=None: embedding_function.encode(
-                        query,
-                        batch_size=int(embedding_batch_size),
-                        **({"prompt": prefix} if prefix else {}),
+                        query, **({"prompt": prefix} if prefix else {})
                     ).tolist()
                 ),
                 query,
@@ -1007,12 +985,7 @@ async def get_sources_from_items(
             if note and (
                 user.role == "admin"
                 or note.user_id == user.id
-                or AccessGrants.has_access(
-                    user_id=user.id,
-                    resource_type="note",
-                    resource_id=note.id,
-                    permission="read",
-                )
+                or has_access(user.id, "read", note.access_control)
             ):
                 # User has access to the note
                 query_result = {
@@ -1104,12 +1077,7 @@ async def get_sources_from_items(
             if knowledge_base and (
                 user.role == "admin"
                 or knowledge_base.user_id == user.id
-                or AccessGrants.has_access(
-                    user_id=user.id,
-                    resource_type="knowledge",
-                    resource_id=knowledge_base.id,
-                    permission="read",
-                )
+                or has_access(user.id, "read", knowledge_base.access_control)
             ):
                 if (
                     item.get("context") == "full"
@@ -1118,12 +1086,7 @@ async def get_sources_from_items(
                     if knowledge_base and (
                         user.role == "admin"
                         or knowledge_base.user_id == user.id
-                        or AccessGrants.has_access(
-                            user_id=user.id,
-                            resource_type="knowledge",
-                            resource_id=knowledge_base.id,
-                            permission="read",
-                        )
+                        or has_access(user.id, "read", knowledge_base.access_control)
                     ):
                         files = Knowledges.get_files_by_id(knowledge_base.id)
 
@@ -1318,7 +1281,7 @@ class RerankCompressor(BaseDocumentCompressor):
 
         scores = None
         if reranking:
-            scores = await asyncio.to_thread(self.reranking_function, query, documents)
+            scores = self.reranking_function(query, documents)
         else:
             from sentence_transformers import util
 

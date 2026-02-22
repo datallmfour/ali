@@ -6,16 +6,15 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from opentelemetry import trace
 from open_webui.env import (
-    ENABLE_AUDIT_STDOUT,
-    ENABLE_AUDIT_LOGS_FILE,
-    AUDIT_LOGS_FILE_PATH,
+    AUDIT_UVICORN_LOGGER_NAMES,
     AUDIT_LOG_FILE_ROTATION_SIZE,
     AUDIT_LOG_LEVEL,
+    AUDIT_LOGS_FILE_PATH,
     GLOBAL_LOG_LEVEL,
-    AUDIT_UVICORN_LOGGER_NAMES,
     ENABLE_OTEL,
     ENABLE_OTEL_LOGS,
 )
+
 
 if TYPE_CHECKING:
     from loguru import Record
@@ -131,11 +130,9 @@ def start_logger():
         sys.stdout,
         level=GLOBAL_LOG_LEVEL,
         format=stdout_format,
-        filter=lambda record: (
-            "auditable" not in record["extra"] if ENABLE_AUDIT_STDOUT else True
-        ),
+        filter=lambda record: "auditable" not in record["extra"],
     )
-    if AUDIT_LOG_LEVEL != "NONE" and ENABLE_AUDIT_LOGS_FILE:
+    if AUDIT_LOG_LEVEL != "NONE":
         try:
             logger.add(
                 AUDIT_LOGS_FILE_PATH,

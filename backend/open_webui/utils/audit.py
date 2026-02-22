@@ -28,6 +28,7 @@ from open_webui.env import AUDIT_LOG_LEVEL, MAX_BODY_LOG_SIZE
 from open_webui.utils.auth import get_current_user, get_http_authorization_cred
 from open_webui.models.users import UserModel
 
+
 if TYPE_CHECKING:
     from loguru import Logger
 
@@ -220,10 +221,7 @@ class AuditLoggingMiddleware:
                 return False  # Do NOT skip logging for auth endpoints
 
         # Skip logging if the request is not authenticated
-        # Check both Authorization header (API keys) and token cookie (browser sessions)
-        if not request.headers.get("authorization") and not request.cookies.get(
-            "token"
-        ):
+        if not request.headers.get("authorization"):
             return True
 
         # match either /api/<resource>/...(for the endpoint /api/chat case) or /api/v1/<resource>/...

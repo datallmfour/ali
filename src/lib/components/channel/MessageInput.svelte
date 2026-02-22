@@ -42,10 +42,9 @@
 	import XMark from '../icons/XMark.svelte';
 
 	export let placeholder = $i18n.t('Type here...');
-	export let chatInputElement;
 
 	export let id = null;
-	export let channel = null;
+	export let chatInputElement;
 
 	export let typingUsers = [];
 	export let inputLoading = false;
@@ -112,21 +111,28 @@
 
 			const clipboardItems = await navigator.clipboard.read();
 
+			let imageUrl = null;
 			for (const item of clipboardItems) {
 				// Check for known image types
 				for (const type of item.types) {
 					if (type.startsWith('image/')) {
 						const blob = await item.getType(type);
-						const file = new File([blob], `clipboard-image.${type.split('/')[1]}`, {
-							type: type
-						});
-
-						inputFilesHandler([file]);
+						imageUrl = URL.createObjectURL(blob);
 					}
 				}
 			}
 
-			text = text.replaceAll('{{CLIPBOARD}}', clipboardText.replaceAll('\r\n', '\n'));
+			if (imageUrl) {
+				files = [
+					...files,
+					{
+						type: 'image',
+						url: imageUrl
+					}
+				];
+			}
+
+			text = text.replaceAll('{{CLIPBOARD}}', clipboardText);
 		}
 
 		if (text.includes('{{USER_LOCATION}}')) {
@@ -145,14 +151,6 @@
 		if (text.includes('{{USER_NAME}}')) {
 			const name = sessionUser?.name || 'User';
 			text = text.replaceAll('{{USER_NAME}}', name);
-		}
-
-		if (text.includes('{{USER_EMAIL}}')) {
-			const email = sessionUser?.email || '';
-
-			if (email) {
-				text = text.replaceAll('{{USER_EMAIL}}', email);
-			}
 		}
 
 		if (text.includes('{{USER_BIO}}')) {
@@ -341,9 +339,8 @@
 
 			// Convert the canvas to a Base64 image URL
 			const imageUrl = canvas.toDataURL('image/png');
-			const blob = await (await fetch(imageUrl)).blob();
-			const file = new File([blob], `screen-capture-${Date.now()}.png`, { type: 'image/png' });
-			inputFilesHandler([file]);
+			// Add the captured image to the files array to render it
+			files = [...files, { type: 'image', url: imageUrl }];
 			// Clean memory: Clear video srcObject
 			video.srcObject = null;
 		} catch (error) {
@@ -380,8 +377,7 @@
 			if (file['type'].startsWith('image/')) {
 				const compressImageHandler = async (imageUrl, settings = {}, config = {}) => {
 					// Quick shortcut so we don’t do unnecessary work.
-					const settingsCompression =
-						(settings?.imageCompression && settings?.imageCompressionInChannels) ?? false;
+					const settingsCompression = settings?.imageCompression ?? false;
 					const configWidth = config?.file?.image_compression?.width ?? null;
 					const configHeight = config?.file?.image_compression?.height ?? null;
 
@@ -421,12 +417,17 @@
 					let imageUrl = event.target.result;
 
 					// Compress the image if settings or config require it
-					imageUrl = await compressImageHandler(imageUrl, $settings, $config);
+					if ($settings?.imageCompression && $settings?.imageCompressionInChannels) {
+						imageUrl = await compressImageHandler(imageUrl, $settings, $config);
+					}
 
-					const blob = await (await fetch(imageUrl)).blob();
-					const compressedFile = new File([blob], file.name, { type: file.type });
-
-					uploadFileHandler(compressedFile, false);
+					files = [
+						...files,
+						{
+							type: 'image',
+							url: `${imageUrl}`
+						}
+					];
 				};
 
 				reader.readAsDataURL(file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file);
@@ -436,7 +437,7 @@
 		});
 	};
 
-	const uploadFileHandler = async (file, process = true) => {
+	const uploadFileHandler = async (file) => {
 		const tempItemId = uuidv4();
 		const fileItem = {
 			type: 'file',
@@ -460,19 +461,19 @@
 
 		try {
 			// During the file upload, file content is automatically extracted.
-			// If the file is an audio file, provide the language for STT.
-			let metadata = {
-				channel_id: channel.id,
-				// If the file is an audio file, provide the language for STT.
-				...((file.type.startsWith('audio/') || file.type.startsWith('video/')) &&
-				$settings?.audio?.stt?.language
-					? {
-							language: $settings?.audio?.stt?.language
-						}
-					: {})
-			};
 
-			const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+			// If the file is an audio file, provide the language for STT.
+			let metadata = null;
+			if (
+				(file.type.startsWith('audio/') || file.type.startsWith('video/')) &&
+				$settings?.audio?.stt?.language
+			) {
+				metadata = {
+					language: $settings?.audio?.stt?.language
+				};
+			}
+
+			const uploadedFile = await uploadFile(localStorage.token, file, metadata);
 
 			if (uploadedFile) {
 				console.info('File upload completed:', {
@@ -491,8 +492,7 @@
 				fileItem.id = uploadedFile.id;
 				fileItem.collection_name =
 					uploadedFile?.meta?.collection_name || uploadedFile?.collection_name;
-				fileItem.content_type = uploadedFile.meta?.content_type || uploadedFile.content_type;
-				fileItem.url = `${uploadedFile.id}`;
+				fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
 
 				files = files;
 			} else {
@@ -807,15 +807,11 @@
 							{#if files.length > 0}
 								<div class="mx-2 mt-2.5 -mb-1 flex flex-wrap gap-2">
 									{#each files as file, fileIdx}
-										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-											{@const fileUrl =
-												file.url.startsWith('data') || file.url.startsWith('http')
-													? file.url
-													: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
+										{#if file.type === 'image'}
 											<div class=" relative group">
 												<div class="relative">
 													<Image
-														src={fileUrl}
+														src={file.url}
 														alt=""
 														imageClassName=" size-10 rounded-xl object-cover"
 													/>
@@ -936,10 +932,28 @@
 
 												if (clipboardData && clipboardData.items) {
 													for (const item of clipboardData.items) {
-														const file = item.getAsFile();
-														if (file) {
-															await inputFilesHandler([file]);
-															e.preventDefault();
+														if (item.type.indexOf('image') !== -1) {
+															const blob = item.getAsFile();
+															const reader = new FileReader();
+
+															reader.onload = function (e) {
+																files = [
+																	...files,
+																	{
+																		type: 'image',
+																		url: `${e.target.result}`
+																	}
+																];
+															};
+
+															reader.readAsDataURL(blob);
+														} else if (item?.kind === 'file') {
+															const file = item.getAsFile();
+															if (file) {
+																const _files = [file];
+																await inputFilesHandler(_files);
+																e.preventDefault();
+															}
 														}
 													}
 												}

@@ -9,23 +9,23 @@ from open_webui.env import (
     OPEN_WEBUI_DIR,
     DATABASE_URL,
     DATABASE_SCHEMA,
+    SRC_LOG_LEVELS,
     DATABASE_POOL_MAX_OVERFLOW,
     DATABASE_POOL_RECYCLE,
     DATABASE_POOL_SIZE,
     DATABASE_POOL_TIMEOUT,
     DATABASE_ENABLE_SQLITE_WAL,
-    DATABASE_ENABLE_SESSION_SHARING,
-    ENABLE_DB_MIGRATIONS,
 )
 from peewee_migrate import Router
 from sqlalchemy import Dialect, create_engine, MetaData, event, types
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import scoped_session, sessionmaker, Session
+from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.pool import QueuePool, NullPool
 from sqlalchemy.sql.type_api import _T
 from typing_extensions import Self
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["DB"])
 
 
 class JSONField(types.TypeDecorator):
@@ -77,8 +77,7 @@ def handle_peewee_migration(DATABASE_URL):
         assert db.is_closed(), "Database connection is still open."
 
 
-if ENABLE_DB_MIGRATIONS:
-    handle_peewee_migration(DATABASE_URL)
+handle_peewee_migration(DATABASE_URL)
 
 
 SQLALCHEMY_DATABASE_URL = DATABASE_URL
@@ -93,6 +92,8 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite+sqlcipher://"):
 
     # Extract database path from SQLCipher URL
     db_path = SQLALCHEMY_DATABASE_URL.replace("sqlite+sqlcipher://", "")
+    if db_path.startswith("/"):
+        db_path = db_path[1:]  # Remove leading slash for relative paths
 
     # Create a custom creator function that uses sqlcipher3
     def create_sqlcipher_connection():
@@ -149,7 +150,7 @@ SessionLocal = sessionmaker(
 )
 metadata_obj = MetaData(schema=DATABASE_SCHEMA)
 Base = declarative_base(metadata=metadata_obj)
-ScopedSession = scoped_session(SessionLocal)
+Session = scoped_session(SessionLocal)
 
 
 def get_session():
@@ -161,12 +162,3 @@ def get_session():
 
 
 get_db = contextmanager(get_session)
-
-
-@contextmanager
-def get_db_context(db: Optional[Session] = None):
-    if isinstance(db, Session) and DATABASE_ENABLE_SESSION_SHARING:
-        yield db
-    else:
-        with get_db() as session:
-            yield session
