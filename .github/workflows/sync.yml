@@ -1,0 +1,110 @@
+# 文件路径: .github/workflows/sync.yml
+# 终极版：包含详细中文日志和自动更新 README 功能
+
+name: 每日自动同步上游仓库 (open-webui)
+
+on:
+  schedule:
+    # 每天北京时间上午8点 (UTC 时间 0点) 运行
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+# 声明此工作流所需的权限
+permissions:
+  # 'contents: write' 是必须的，用于推送代码（包括更新 README.md）
+  contents: write
+
+jobs:
+  sync-and-update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 准备工作：检出你的仓库代码
+        uses: actions/checkout@v4
+        with:
+          # 必须使用一个有写权限的 token，这里我们用 job 级别的 GITHUB_TOKEN
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # 获取所有历史记录，以便后续操作
+          fetch-depth: 0
+        
+      - name: 2. 配置 Git 用户信息
+        run: |
+          echo "⚙️ 配置 Git 用户信息，用于后续的提交..."
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          echo "✅ Git 用户信息配置完成！"
+
+      - name: 3. 从上游仓库安全地同步代码
+        run: |
+          echo "🚀 开始同步上游仓库：open-webui/open-webui"
+          
+          # 原始（上游）仓库的 URL
+          UPSTREAM_URL="https://github.com/open-webui/open-webui.git"
+          
+          # 添加上游仓库为远程源
+          echo "   - 添加上游仓库 (upstream) ..."
+          git remote add upstream $UPSTREAM_URL
+          
+          # 从上游获取最新的数据
+          echo "   - 正在从上游获取最新数据..."
+          git fetch upstream --progress --prune
+          
+          # 获取上游仓库的默认分支名 (通常是 main)
+          UPSTREAM_DEFAULT_BRANCH=$(git remote show upstream | grep 'HEAD branch' | cut -d' ' -f5)
+          echo "   - 上游仓库的默认分支是: ${UPSTREAM_DEFAULT_BRANCH}"
+          
+          # 关键步骤：直接更新本地引用，不影响工作目录
+          echo "   - 正在将本地分支指针更新至上游最新状态..."
+          git update-ref refs/heads/${UPSTREAM_DEFAULT_BRANCH} upstream/${UPSTREAM_DEFAULT_BRANCH}
+
+          echo "✅ 代码同步逻辑完成！下一步将推送至你的仓库。"
+
+      - name: 4. 更新 README.md 文件
+        run: |
+          echo "📝 准备更新 README.md 文件以记录本次同步..."
+          
+          # 检查 README.md 文件是否存在
+          if [ ! -f README.md ]; then
+            echo "   - 警告：未找到 README.md 文件，跳过此步骤。"
+            exit 0
+          fi
+          
+          # 获取当前的北京时间
+          SYNC_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')
+          
+          # 定义要追加的信息
+          SYNC_INFO="\n---\n*由 GitHub Actions 自动同步于北京时间：\`${SYNC_TIME}\`*\n"
+          
+          # 追加信息到 README.md 文件末尾
+          echo -e "${SYNC_INFO}" >> README.md
+          
+          echo "   - 已将同步信息追加到 README.md 文件末尾。"
+          echo "✅ README.md 更新完成！"
+
+      - name: 5. 提交并推送所有更改
+        run: |
+          echo "🚀 准备将所有更改（包括同步的代码和更新的 README）推送到你的仓库..."
+          
+          # 获取默认分支名
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+          
+          # 添加 README.md 的更改到暂存区
+          git add README.md
+          
+          # 检查是否有文件更改需要提交 (可能 README.md 是唯一更改)
+          if git diff-index --quiet HEAD --; then
+            echo "   - 除了分支指针移动，没有文件内容更改，无需创建新提交。"
+          else
+            echo "   - 检测到 README.md 文件已更新，正在创建新提交..."
+            git commit -m "chore: 自动同步并更新 README [skip ci]"
+          fi
+
+          # 强制推送到你的远程仓库 (origin)
+          echo "   - 正在强制推送到 origin/${DEFAULT_BRANCH} ..."
+          git push origin ${DEFAULT_BRANCH} --force
+          
+          # (可选) 同步所有标签
+          echo "   - 正在同步所有标签..."
+          git fetch upstream --tags --force
+          git push origin --tags --force
+          
+          echo "🎉🎉🎉 所有操作成功完成！你的仓库已是最新状态！🎉🎉🎉"

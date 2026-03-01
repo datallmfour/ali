@@ -22,10 +22,12 @@ from open_webui.config import (
     QDRANT_TIMEOUT,
     QDRANT_HNSW_M,
 )
+from open_webui.env import SRC_LOG_LEVELS
 
 NO_LIMIT = 999999999
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 
 class QdrantClient(VectorDBBase):
@@ -145,11 +147,7 @@ class QdrantClient(VectorDBBase):
         )
 
     def search(
-        self,
-        collection_name: str,
-        vectors: list[list[float | int]],
-        filter: Optional[dict] = None,
-        limit: int = 10,
+        self, collection_name: str, vectors: list[list[float | int]], limit: int
     ) -> Optional[SearchResult]:
         # Search for the nearest neighbor items based on the vectors and return 'limit' number of results.
         if limit is None:

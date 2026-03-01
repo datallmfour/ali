@@ -1,13 +1,11 @@
 <script>
-	import { toast } from 'svelte-sonner';
-
 	import { goto } from '$app/navigation';
 	import { getContext } from 'svelte';
 	const i18n = getContext('i18n');
 
-	import { user } from '$lib/stores';
-	import { createNewKnowledge } from '$lib/apis/knowledge';
-
+	import { createNewKnowledge, getKnowledgeBases } from '$lib/apis/knowledge';
+	import { toast } from 'svelte-sonner';
+	import { knowledge, user } from '$lib/stores';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 
@@ -15,7 +13,7 @@
 
 	let name = '';
 	let description = '';
-	let accessGrants = [];
+	let accessControl = {};
 
 	const submitHandler = async () => {
 		loading = true;
@@ -28,14 +26,18 @@
 			return;
 		}
 
-		const res = await createNewKnowledge(localStorage.token, name, description, accessGrants).catch(
-			(e) => {
-				toast.error(`${e}`);
-			}
-		);
+		const res = await createNewKnowledge(
+			localStorage.token,
+			name,
+			description,
+			accessControl
+		).catch((e) => {
+			toast.error(`${e}`);
+		});
 
 		if (res) {
 			toast.success($i18n.t('Knowledge created successfully.'));
+			knowledge.set(await getKnowledgeBases(localStorage.token));
 			goto(`/workspace/knowledge/${res.id}`);
 		}
 
@@ -111,7 +113,7 @@
 
 		<div class="mt-2">
 			<AccessControl
-				bind:accessGrants
+				bind:accessControl
 				accessRoles={['read', 'write']}
 				share={$user?.permissions?.sharing?.knowledge || $user?.role === 'admin'}
 				sharePublic={$user?.permissions?.sharing?.public_knowledge || $user?.role === 'admin'}

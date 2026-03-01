@@ -133,9 +133,7 @@
 											await temporaryChatEnabled.set(!$temporaryChatEnabled);
 										}
 
-										if ($page.url.pathname !== '/') {
-											await goto('/');
-										}
+										await goto('/');
 
 										// add 'temporary-chat=true' to the URL
 										if ($temporaryChatEnabled) {

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { getContext, onMount, onDestroy } from 'svelte';
+	import { getContext, onMount } from 'svelte';
 
 	const i18n = getContext('i18n');
 
 	import { user as _user } from '$lib/stores';
-	import { getUserInfoById, searchUsers } from '$lib/apis/users';
+	import { getUserById, searchUsers } from '$lib/apis/users';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -39,7 +39,6 @@
 	let total = null;
 
 	let query = '';
-	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 	let orderBy = 'name'; // default sort key
 	let direction = 'asc'; // default sort order
 
@@ -61,30 +60,15 @@
 		}
 	};
 
-	$: if (query !== undefined) {
-		clearTimeout(searchDebounceTimer);
-		searchDebounceTimer = setTimeout(() => {
-			getUserList();
-		}, 300);
-	}
-
-	onDestroy(() => {
-		clearTimeout(searchDebounceTimer);
-	});
-
-	$: if (page !== null && orderBy !== null && direction !== null) {
+	$: if (page !== null && query !== null && orderBy !== null && direction !== null) {
 		getUserList();
 	}
 
 	onMount(async () => {
-		groups = await getGroups(localStorage.token, true).catch((error) => {
-			console.error(error);
-			return [];
-		});
-
+		groups = await getGroups(localStorage.token, true);
 		if (userIds.length > 0) {
 			userIds.forEach(async (id) => {
-				const res = await getUserInfoById(localStorage.token, id).catch((error) => {
+				const res = await getUserById(localStorage.token, id).catch((error) => {
 					console.error(error);
 					return null;
 				});
@@ -191,7 +175,7 @@
 			</div>
 		</div>
 
-		{#if users.length > 0 || filteredGroups.length > 0}
+		{#if users.length > 0}
 			<div class="scrollbar-hidden relative whitespace-nowrap w-full max-w-full">
 				<div class=" text-sm text-left text-gray-500 dark:text-gray-400 w-full max-w-full">
 					<div class="w-full max-h-96 overflow-y-auto rounded-lg">

@@ -3,11 +3,10 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 type ChannelForm = {
 	type?: string;
 	name: string;
-	is_private?: boolean | null;
+	is_private?: boolean;
 	data?: object;
 	meta?: object;
-	access_grants?: object[];
-	group_ids?: string[];
+	access_control?: object;
 	user_ids?: string[];
 };
 
@@ -492,44 +491,6 @@ export const getChannelThreadMessages = async (
 	return res;
 };
 
-export const getMessageData = async (
-	token: string = '',
-	channel_id: string,
-	message_id: string
-) => {
-	let error = null;
-
-	const res = await fetch(
-		`${WEBUI_API_BASE_URL}/channels/${channel_id}/messages/${message_id}/data`,
-		{
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
-	)
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
 type MessageForm = {
 	temp_id?: string;
 	reply_to_id?: string;
@@ -736,158 +697,6 @@ export const deleteMessage = async (token: string = '', channel_id: string, mess
 
 	const res = await fetch(
 		`${WEBUI_API_BASE_URL}/channels/${channel_id}/messages/${message_id}/delete`,
-		{
-			method: 'DELETE',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
-	)
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-// Webhook API functions
-
-type WebhookForm = {
-	name: string;
-	profile_image_url?: string;
-};
-
-export const getChannelWebhooks = async (token: string = '', channel_id: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/channels/${channel_id}/webhooks`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const createChannelWebhook = async (
-	token: string = '',
-	channel_id: string,
-	formData: WebhookForm
-) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/channels/${channel_id}/webhooks/create`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({ ...formData })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const updateChannelWebhook = async (
-	token: string = '',
-	channel_id: string,
-	webhook_id: string,
-	formData: WebhookForm
-) => {
-	let error = null;
-
-	const res = await fetch(
-		`${WEBUI_API_BASE_URL}/channels/${channel_id}/webhooks/${webhook_id}/update`,
-		{
-			method: 'POST',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			},
-			body: JSON.stringify({ ...formData })
-		}
-	)
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const deleteChannelWebhook = async (
-	token: string = '',
-	channel_id: string,
-	webhook_id: string
-) => {
-	let error = null;
-
-	const res = await fetch(
-		`${WEBUI_API_BASE_URL}/channels/${channel_id}/webhooks/${webhook_id}/delete`,
 		{
 			method: 'DELETE',
 			headers: {

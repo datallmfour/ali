@@ -9,7 +9,7 @@
 	import { getUsage } from '$lib/apis';
 	import { getSessionUser, userSignOut } from '$lib/apis/auths';
 
-	import { showSettings, mobile, showSidebar, showShortcuts, user, config } from '$lib/stores';
+	import { showSettings, mobile, showSidebar, showShortcuts, user } from '$lib/stores';
 
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
@@ -59,14 +59,9 @@
 		}
 	};
 
-	const handleDropdownChange = (state: boolean) => {
-		dispatch('change', state);
-
-		// Fetch usage info when dropdown opens, if user has permission
-		if (state && ($config?.features?.enable_public_active_users_count || role === 'admin')) {
-			getUsageInfo();
-		}
-	};
+	$: if (show) {
+		getUsageInfo();
+	}
 </script>
 
 <ShortcutsModal bind:show={$showShortcuts} />
@@ -78,7 +73,12 @@
 />
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<DropdownMenu.Root bind:open={show} onOpenChange={handleDropdownChange}>
+<DropdownMenu.Root
+	bind:open={show}
+	onOpenChange={(state) => {
+		dispatch('change', state);
+	}}
+>
 	<DropdownMenu.Trigger>
 		<slot />
 	</DropdownMenu.Trigger>
@@ -110,6 +110,9 @@
 							{#if $user?.is_active ?? true}
 								<div>
 									<span class="relative flex size-2">
+										<span
+											class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
+										/>
 										<span class="relative inline-flex rounded-full size-2 bg-green-500" />
 									</span>
 								</div>
@@ -201,7 +204,7 @@
 			{/if}
 
 			<DropdownMenu.Item
-				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer"
 				on:click={async () => {
 					show = false;
 
@@ -220,7 +223,7 @@
 			</DropdownMenu.Item>
 
 			<DropdownMenu.Item
-				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer"
 				on:click={async () => {
 					show = false;
 
@@ -243,8 +246,7 @@
 				<DropdownMenu.Item
 					as="a"
 					href="/playground"
-					draggable="false"
-					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition select-none"
 					on:click={async () => {
 						show = false;
 						if ($mobile) {
@@ -261,8 +263,7 @@
 				<DropdownMenu.Item
 					as="a"
 					href="/admin"
-					draggable="false"
-					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition select-none"
 					on:click={async () => {
 						show = false;
 						if ($mobile) {
@@ -286,42 +287,36 @@
 				{#if $user?.role === 'admin'}
 					<DropdownMenu.Item
 						as="a"
-						href="https://docs.openwebui.com"
 						target="_blank"
-						draggable="false"
-						class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						class="flex gap-3 items-center py-1.5 px-3 text-sm select-none w-full cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition"
 						id="chat-share-button"
 						on:click={() => {
 							show = false;
 						}}
+						href="https://docs.openwebui.com"
 					>
-						<div class=" self-center mr-3">
-							<QuestionMarkCircle className="size-5" />
-						</div>
-						<div class=" self-center truncate">{$i18n.t('Documentation')}</div>
+						<QuestionMarkCircle className="size-5" />
+						<div class="flex items-center">{$i18n.t('Documentation')}</div>
 					</DropdownMenu.Item>
 
 					<!-- Releases -->
 					<DropdownMenu.Item
 						as="a"
-						href="https://github.com/open-webui/open-webui/releases"
 						target="_blank"
-						draggable="false"
-						class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						class="flex gap-3 items-center py-1.5 px-3 text-sm select-none w-full cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition"
 						id="chat-share-button"
 						on:click={() => {
 							show = false;
 						}}
+						href="https://github.com/open-webui/open-webui/releases"
 					>
-						<div class=" self-center mr-3">
-							<Map className="size-5" />
-						</div>
-						<div class=" self-center truncate">{$i18n.t('Releases')}</div>
+						<Map className="size-5" />
+						<div class="flex items-center">{$i18n.t('Releases')}</div>
 					</DropdownMenu.Item>
 				{/if}
 
 				<DropdownMenu.Item
-					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+					class="flex gap-3 items-center py-1.5 px-3 text-sm select-none w-full  hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition cursor-pointer"
 					id="chat-share-button"
 					on:click={async () => {
 						show = false;
@@ -333,17 +328,15 @@
 						}
 					}}
 				>
-					<div class=" self-center mr-3">
-						<Keyboard className="size-5" />
-					</div>
-					<div class=" self-center truncate">{$i18n.t('Keyboard shortcuts')}</div>
+					<Keyboard className="size-5" />
+					<div class="flex items-center">{$i18n.t('Keyboard shortcuts')}</div>
 				</DropdownMenu.Item>
 			{/if}
 
 			<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
 
 			<DropdownMenu.Item
-				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
 				on:click={async () => {
 					const res = await userSignOut();
 					user.set(null);
@@ -359,7 +352,7 @@
 				<div class=" self-center truncate">{$i18n.t('Sign Out')}</div>
 			</DropdownMenu.Item>
 
-			{#if showActiveUsers && ($config?.features?.enable_public_active_users_count || role === 'admin') && usage}
+			{#if showActiveUsers && usage}
 				{#if usage?.user_count}
 					<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
 
@@ -371,13 +364,14 @@
 						<div
 							class="flex rounded-xl py-1 px-3 text-xs gap-2.5 items-center"
 							on:mouseenter={() => {
-								if ($config?.features?.enable_public_active_users_count || role === 'admin') {
-									getUsageInfo();
-								}
+								getUsageInfo();
 							}}
 						>
 							<div class=" flex items-center">
 								<span class="relative flex size-2">
+									<span
+										class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
+									/>
 									<span class="relative inline-flex rounded-full size-2 bg-green-500" />
 								</span>
 							</div>

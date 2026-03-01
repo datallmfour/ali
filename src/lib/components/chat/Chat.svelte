@@ -53,8 +53,7 @@
 		getPromptVariables,
 		processDetails,
 		removeAllDetails,
-		getCodeBlockContents,
-		isYoutubeUrl
+		getCodeBlockContents
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
 
@@ -120,7 +119,6 @@
 	let eventConfirmationInput = false;
 	let eventConfirmationInputPlaceholder = '';
 	let eventConfirmationInputValue = '';
-	let eventConfirmationInputType = '';
 	let eventCallback = null;
 
 	let chatIdUnsubscriber: Unsubscriber | undefined;
@@ -161,9 +159,6 @@
 	let files = [];
 	let params = {};
 
-	// Message queue for storing messages while generating
-	let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
-
 	$: if (chatIdProp) {
 		navigateHandler();
 	}
@@ -171,16 +166,10 @@
 	const navigateHandler = async () => {
 		loading = true;
 
-		// Save current queue to sessionStorage before navigating away
-		if (messageQueue.length > 0 && $chatId) {
-			sessionStorage.setItem(`chat-queue-${$chatId}`, JSON.stringify(messageQueue));
-		}
-
 		prompt = '';
 		messageInput?.setText('');
 
 		files = [];
-		messageQueue = [];
 		selectedToolIds = [];
 		selectedFilterIds = [];
 		webSearchEnabled = false;
@@ -196,30 +185,6 @@
 			window.setTimeout(() => scrollToBottom(), 0);
 
 			await tick();
-
-			// Restore queue from sessionStorage
-			const storedQueueData = sessionStorage.getItem(`chat-queue-${chatIdProp}`);
-			if (storedQueueData) {
-				try {
-					const restoredQueue = JSON.parse(storedQueueData);
-
-					if (restoredQueue.length > 0) {
-						sessionStorage.removeItem(`chat-queue-${chatIdProp}`);
-						// Check if there are pending tasks (still generating)
-						const hasPendingTask = taskIds !== null && taskIds.length > 0;
-						if (!hasPendingTask) {
-							// No pending tasks - process the queue
-							files = restoredQueue.flatMap((m) => m.files);
-							await tick();
-							const combinedPrompt = restoredQueue.map((m) => m.prompt).join('\n\n');
-							await submitPrompt(combinedPrompt);
-						} else {
-							// Has pending tasks - show as queued (chatCompletedHandler will process)
-							messageQueue = restoredQueue;
-						}
-					}
-				} catch (e) {}
-			}
 
 			if (storageChatInput) {
 				try {
@@ -330,34 +295,24 @@
 
 			// Set Default Features
 			if (model?.info?.meta?.defaultFeatureIds) {
-				if (
-					model.info?.meta?.capabilities?.['image_generation'] &&
-					$config?.features?.enable_image_generation &&
-					($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
-				) {
+				if (model.info?.meta?.capabilities?.['image_generation']) {
 					imageGenerationEnabled = model.info.meta.defaultFeatureIds.includes('image_generation');
 				}
 
-				if (
-					model.info?.meta?.capabilities?.['web_search'] &&
-					$config?.features?.enable_web_search &&
-					($user?.role === 'admin' || $user?.permissions?.features?.web_search)
-				) {
+				if (model.info?.meta?.capabilities?.['web_search']) {
 					webSearchEnabled = model.info.meta.defaultFeatureIds.includes('web_search');
 				}
 
-				if (
-					model.info?.meta?.capabilities?.['code_interpreter'] &&
-					$config?.features?.enable_code_interpreter &&
-					($user?.role === 'admin' || $user?.permissions?.features?.code_interpreter)
-				) {
+				if (model.info?.meta?.capabilities?.['code_interpreter']) {
 					codeInterpreterEnabled = model.info.meta.defaultFeatureIds.includes('code_interpreter');
 				}
 			}
 		}
 	};
 
-	const showMessage = async (message, scroll = true) => {
+	const showMessage = async (message, ignoreSettings = false) => {
+		await tick();
+
 		const _chatId = JSON.parse(JSON.stringify($chatId));
 		let _messageId = JSON.parse(JSON.stringify(message.id));
 
@@ -378,18 +333,17 @@
 		history.currentId = _messageId;
 
 		await tick();
+		await tick();
+		await tick();
 
-		if (($settings?.scrollOnBranchChange ?? true) && scroll) {
+		if (($settings?.scrollOnBranchChange ?? true) || ignoreSettings) {
 			const messageElement = document.getElementById(`message-${message.id}`);
 			if (messageElement) {
-				messageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				messageElement.scrollIntoView({ behavior: 'smooth' });
 			}
 		}
 
 		await tick();
-		await tick();
-		await tick();
-
 		saveChatHandler(_chatId, history);
 	};
 
@@ -427,15 +381,6 @@
 					message.files = data.files;
 				} else if (type === 'chat:message:embeds' || type === 'embeds') {
 					message.embeds = data.embeds;
-
-					// Auto-scroll to the embed once it's rendered in the DOM
-					await tick();
-					setTimeout(() => {
-						const embedEl = document.getElementById(`${event.message_id}-embeds-container`);
-						if (embedEl) {
-							embedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-						}
-					}, 100);
 				} else if (type === 'chat:message:error') {
 					message.error = data.error;
 				} else if (type === 'chat:message:follow_ups') {
@@ -444,9 +389,6 @@
 					if (autoScroll) {
 						scrollToBottom('smooth');
 					}
-				} else if (type === 'chat:message:favorite') {
-					// Update message favorite status
-					message.favorite = data.favorite;
 				} else if (type === 'chat:title') {
 					chatTitle.set(data);
 					currentChatPage.set(1);
@@ -525,7 +467,6 @@
 					eventConfirmationMessage = data.message;
 					eventConfirmationInputPlaceholder = data.placeholder;
 					eventConfirmationInputValue = data?.value ?? '';
-					eventConfirmationInputType = data?.type ?? '';
 				} else {
 					console.log('Unknown message type', data);
 				}
@@ -817,7 +758,7 @@
 			fileItem.id = uploadedFile.id;
 			fileItem.size = file.size;
 			fileItem.collection_name = uploadedFile?.meta?.collection_name;
-			fileItem.url = `${uploadedFile.id}`;
+			fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
 
 			files = files;
 			toast.success($i18n.t('File uploaded successfully'));
@@ -832,60 +773,69 @@
 		}
 	};
 
-	const uploadWeb = async (urls) => {
-		if ($user?.role !== 'admin' && !($user?.permissions?.chat?.web_upload ?? true)) {
-			toast.error($i18n.t('You do not have permission to upload web content.'));
-			return;
-		}
+	const uploadWeb = async (url) => {
+		console.log(url);
 
-		if (!Array.isArray(urls)) {
-			urls = [urls];
-		}
+		const fileItem = {
+			type: 'text',
+			name: url,
+			collection_name: '',
+			status: 'uploading',
+			url: url,
+			error: ''
+		};
 
-		// Create file items first
-		const fileItems = urls.map((url) => ({
+		try {
+			files = [...files, fileItem];
+			const res = await processWeb(localStorage.token, '', url);
+
+			if (res) {
+				fileItem.status = 'uploaded';
+				fileItem.collection_name = res.collection_name;
+				fileItem.file = {
+					...res.file,
+					...fileItem.file
+				};
+
+				files = files;
+			}
+		} catch (e) {
+			// Remove the failed doc from the files array
+			files = files.filter((f) => f.name !== url);
+			toast.error(JSON.stringify(e));
+		}
+	};
+
+	const uploadYoutubeTranscription = async (url) => {
+		console.log(url);
+
+		const fileItem = {
 			type: 'text',
 			name: url,
 			collection_name: '',
 			status: 'uploading',
 			context: 'full',
-			url,
+			url: url,
 			error: ''
-		}));
+		};
 
-		// Display all items at once
-		files = [...files, ...fileItems];
+		try {
+			files = [...files, fileItem];
+			const res = await processYoutubeVideo(localStorage.token, url);
 
-		for (const fileItem of fileItems) {
-			try {
-				const res = isYoutubeUrl(fileItem.url)
-					? await processYoutubeVideo(localStorage.token, fileItem.url)
-					: await processWeb(localStorage.token, '', fileItem.url);
-
-				if (res) {
-					fileItem.status = 'uploaded';
-					fileItem.collection_name = res.collection_name;
-					fileItem.file = {
-						...res.file,
-						...fileItem.file
-					};
-				}
-
-				files = [...files];
-			} catch (e) {
-				files = files.filter((f) => f.name !== url);
-				toast.error(`${e}`);
+			if (res) {
+				fileItem.status = 'uploaded';
+				fileItem.collection_name = res.collection_name;
+				fileItem.file = {
+					...res.file,
+					...fileItem.file
+				};
+				files = files;
 			}
-		}
-	};
-
-	const onUpload = async (event) => {
-		const { type, data } = event;
-
-		if (type === 'google-drive') {
-			await uploadGoogleDriveFile(data);
-		} else if (type === 'web') {
-			await uploadWeb(data);
+		} catch (e) {
+			// Remove the failed doc from the files array
+			files = files.filter((f) => f.name !== url);
+			toast.error(`${e}`);
 		}
 	};
 
@@ -965,15 +915,9 @@
 			}
 		}
 
-		if ($user?.role !== 'admin' && !$user?.permissions?.chat?.temporary) {
-			await temporaryChatEnabled.set(false);
-		}
-
 		const availableModels = $models
 			.filter((m) => !(m?.info?.meta?.hidden ?? false))
 			.map((m) => m.id);
-
-		const defaultModels = $config?.default_models ? $config?.default_models.split(',') : [];
 
 		if ($page.url.searchParams.get('models') || $page.url.searchParams.get('model')) {
 			const urlModels = (
@@ -983,8 +927,8 @@
 			)?.split(',');
 
 			if (urlModels.length === 1) {
-				if (!$models.find((m) => m.id === urlModels[0])) {
-					// Model not found; open model selector and prefill
+				const m = $models.find((m) => m.id === urlModels[0]);
+				if (!m) {
 					const modelSelectorButton = document.getElementById('model-selector-0-button');
 					if (modelSelectorButton) {
 						modelSelectorButton.click();
@@ -998,56 +942,38 @@
 						}
 					}
 				} else {
-					// Model found; set it as selected
 					selectedModels = urlModels;
 				}
 			} else {
-				// Multiple models; set as selected
 				selectedModels = urlModels;
 			}
 
-			// Unavailable models filtering
 			selectedModels = selectedModels.filter((modelId) =>
 				$models.map((m) => m.id).includes(modelId)
 			);
 		} else {
 			if ($selectedFolder?.data?.model_ids) {
-				// Set from folder model IDs
 				selectedModels = $selectedFolder?.data?.model_ids;
 			} else {
 				if (sessionStorage.selectedModels) {
-					// Set from session storage (temporary selection)
 					selectedModels = JSON.parse(sessionStorage.selectedModels);
 					sessionStorage.removeItem('selectedModels');
 				} else {
 					if ($settings?.models) {
-						// Set from user settings
 						selectedModels = $settings?.models;
-					} else if (defaultModels && defaultModels.length > 0) {
-						// Set from default models
-						selectedModels = defaultModels;
+					} else if ($config?.default_models) {
+						console.log($config?.default_models.split(',') ?? '');
+						selectedModels = $config?.default_models.split(',');
 					}
 				}
 			}
 
-			// Unavailable & hidden models filtering
 			selectedModels = selectedModels.filter((modelId) => availableModels.includes(modelId));
 		}
 
-		// Ensure at least one model is selected
 		if (selectedModels.length === 0 || (selectedModels.length === 1 && selectedModels[0] === '')) {
 			if (availableModels.length > 0) {
-				if (defaultModels && defaultModels.length > 0) {
-					selectedModels = defaultModels.filter((modelId) => availableModels.includes(modelId));
-				}
-
-				if (
-					selectedModels.length === 0 ||
-					(selectedModels.length === 1 && selectedModels[0] === '')
-				) {
-					// Only fall back to first available model if default models didn't resolve
-					selectedModels = [availableModels?.at(0) ?? ''];
-				}
+				selectedModels = [availableModels?.at(0) ?? ''];
 			} else {
 				selectedModels = [''];
 			}
@@ -1075,11 +1001,11 @@
 
 		chatFiles = [];
 		params = {};
-		taskIds = null;
-		messageQueue = [];
 
 		if ($page.url.searchParams.get('youtube')) {
-			await uploadWeb(`https://www.youtube.com/watch?v=${$page.url.searchParams.get('youtube')}`);
+			uploadYoutubeTranscription(
+				`https://www.youtube.com/watch?v=${$page.url.searchParams.get('youtube')}`
+			);
 		}
 
 		if ($page.url.searchParams.get('load-url')) {
@@ -1185,7 +1111,7 @@
 
 				if (history.currentId) {
 					for (const message of Object.values(history.messages)) {
-						if (message && message.role === 'assistant') {
+						if (message.role === 'assistant') {
 							message.done = true;
 						}
 					}
@@ -1275,18 +1201,6 @@
 		}
 
 		taskIds = null;
-
-		// Process message queue - combine all queued messages and submit at once
-		if (messageQueue.length > 0) {
-			const combinedPrompt = messageQueue.map((m) => m.prompt).join('\n\n');
-			const combinedFiles = messageQueue.flatMap((m) => m.files);
-			messageQueue = [];
-
-			// Set the files and submit
-			files = combinedFiles;
-			await tick();
-			await submitPrompt(combinedPrompt);
-		}
 	};
 
 	const chatActionHandler = async (_chatId, actionId, modelId, responseMessageId, event = null) => {
@@ -1359,11 +1273,6 @@
 		} else {
 			const modelId = selectedModels[0];
 			const model = $models.filter((m) => m.id === modelId).at(0);
-
-			if (!model) {
-				toast.error($i18n.t('Model not found'));
-				return;
-			}
 
 			const messages = createMessagesList(history, history.currentId);
 			const parentMessage = messages.length !== 0 ? messages.at(-1) : null;
@@ -1481,12 +1390,7 @@
 	};
 
 	const chatCompletionEventHandler = async (data, message, chatId) => {
-		const { id, done, choices, content, output, sources, selected_model_id, error, usage } = data;
-
-		// Store raw OR-aligned output items from backend
-		if (output) {
-			message.output = output;
-		}
+		const { id, done, choices, content, sources, selected_model_id, error, usage } = data;
 
 		if (error) {
 			await handleOpenAIError(error, message);
@@ -1684,33 +1588,12 @@
 			return;
 		}
 
-		// Check if there are pending tasks (more reliable than lastMessage.done)
-		if (taskIds !== null && taskIds.length > 0) {
-			if ($settings?.enableMessageQueue ?? true) {
-				// Queue the message
-				const _files = JSON.parse(JSON.stringify(files));
-				messageQueue = [
-					...messageQueue,
-					{
-						id: uuidv4(),
-						prompt: userPrompt,
-						files: _files
-					}
-				];
-				// Clear input
-				messageInput?.setText('');
-				prompt = '';
-				files = [];
-				return;
-			} else {
-				// Interrupt: stop current generation and proceed
-				await stopResponse();
-				await tick();
-			}
-		}
-
 		if (history?.currentId) {
 			const lastMessage = history.messages[history.currentId];
+			if (lastMessage.done != true) {
+				// Response not done
+				return;
+			}
 
 			if (lastMessage.error && !lastMessage.content) {
 				// Error in response
@@ -1726,10 +1609,8 @@
 		const _files = JSON.parse(JSON.stringify(files));
 
 		chatFiles.push(
-			..._files.filter(
-				(item) =>
-					['doc', 'text', 'note', 'chat', 'folder', 'collection'].includes(item.type) ||
-					(item.type === 'file' && !(item?.content_type ?? '').startsWith('image/'))
+			..._files.filter((item) =>
+				['doc', 'text', 'file', 'note', 'chat', 'folder', 'collection'].includes(item.type)
 			)
 		);
 		chatFiles = chatFiles.filter(
@@ -1856,18 +1737,11 @@
 
 				if (model) {
 					// If there are image files, check if model is vision capable
-					// Skip this check if image generation is enabled, as images may be for editing or are generated outputs in the history
 					const hasImages = createMessagesList(_history, parentId).some((message) =>
-						message.files?.some(
-							(file) => file.type === 'image' || (file?.content_type ?? '').startsWith('image/')
-						)
+						message.files?.some((file) => file.type === 'image')
 					);
 
-					if (
-						hasImages &&
-						!(model.info?.meta?.capabilities?.vision ?? true) &&
-						!imageGenerationEnabled
-					) {
+					if (hasImages && !(model.info?.meta?.capabilities?.vision ?? true)) {
 						toast.error(
 							$i18n.t('Model {{modelName}} is not vision capable', {
 								modelName: model.name ?? model.id
@@ -1958,10 +1832,8 @@
 
 		let files = JSON.parse(JSON.stringify(chatFiles));
 		files.push(
-			...(userMessage?.files ?? []).filter(
-				(item) =>
-					['doc', 'text', 'note', 'chat', 'collection'].includes(item.type) ||
-					(item.type === 'file' && !(item?.content_type ?? '').startsWith('image/'))
+			...(userMessage?.files ?? []).filter((item) =>
+				['doc', 'text', 'file', 'note', 'chat', 'collection'].includes(item.type)
 			)
 		);
 		// Remove duplicates
@@ -2003,40 +1875,35 @@
 				: undefined,
 			..._messages.map((message) => ({
 				...message,
-				content: processDetails(message.content),
-				// Include output for temp chats (backend will use it and strip before LLM)
-				...(message.output ? { output: message.output } : {})
+				content: processDetails(message.content)
 			}))
 		].filter((message) => message);
 
 		messages = messages
-			.map((message, idx, arr) => {
-				const imageFiles = (message?.files ?? []).filter(
-					(file) => file.type === 'image' || (file?.content_type ?? '').startsWith('image/')
-				);
-
-				return {
-					role: message.role,
-					...(message.role === 'user' && imageFiles.length > 0
-						? {
-								content: [
-									{
-										type: 'text',
-										text: message?.merged?.content ?? message.content
-									},
-									...imageFiles.map((file) => ({
+			.map((message, idx, arr) => ({
+				role: message.role,
+				...((message.files?.filter((file) => file.type === 'image').length > 0 ?? false) &&
+				message.role === 'user'
+					? {
+							content: [
+								{
+									type: 'text',
+									text: message?.merged?.content ?? message.content
+								},
+								...message.files
+									.filter((file) => file.type === 'image')
+									.map((file) => ({
 										type: 'image_url',
 										image_url: {
 											url: file.url
 										}
 									}))
-								]
-							}
-						: {
-								content: message?.merged?.content ?? message.content
-							})
-				};
-			})
+							]
+						}
+					: {
+							content: message?.merged?.content ?? message.content
+						})
+			}))
 			.filter((message) => message?.role === 'user' || message?.content?.trim());
 
 		const toolIds = [];
@@ -2054,41 +1921,6 @@
 			} else {
 				toolIds.push(toolId);
 			}
-		}
-
-		// Parse skill mentions (<$skillId|label>) from user messages
-		const skillMentionRegex = /<\$([^|>]+)\|?[^>]*>/g;
-		const skillIds = [];
-		for (const message of messages) {
-			const content =
-				typeof message.content === 'string' ? message.content : (message.content?.[0]?.text ?? '');
-			for (const match of content.matchAll(skillMentionRegex)) {
-				if (!skillIds.includes(match[1])) {
-					skillIds.push(match[1]);
-				}
-			}
-		}
-
-		// Strip skill mentions from message content
-		if (skillIds.length > 0) {
-			messages = messages.map((message) => {
-				if (typeof message.content === 'string') {
-					return {
-						...message,
-						content: message.content.replace(/<\$[^>]+>/g, '').trim()
-					};
-				} else if (Array.isArray(message.content)) {
-					return {
-						...message,
-						content: message.content.map((part) =>
-							part.type === 'text'
-								? { ...part, text: part.text.replace(/<\$[^>]+>/g, '').trim() }
-								: part
-						)
-					};
-				}
-				return message;
-			});
 		}
 
 		const res = await generateOpenAIChatCompletion(
@@ -2112,17 +1944,12 @@
 
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
-				skill_ids: skillIds.length > 0 ? skillIds : undefined,
 				tool_servers: ($toolServers ?? []).filter(
 					(server, idx) => toolServerIds.includes(idx) || toolServerIds.includes(server?.id)
 				),
 				features: getFeatures(),
 				variables: {
-					...getPromptVariables(
-						$user?.name,
-						$settings?.userLocation ? userLocation : undefined,
-						$user?.email
-					)
+					...getPromptVariables($user?.name, $settings?.userLocation ? userLocation : undefined)
 				},
 				model_item: $models.find((m) => m.id === model.id),
 
@@ -2131,7 +1958,6 @@
 
 				id: responseMessageId,
 				parent_id: userMessage?.id ?? null,
-				parent_message: userMessage,
 
 				background_tasks: {
 					...(!$temporaryChatEnabled &&
@@ -2255,10 +2081,8 @@
 
 			const responseMessage = history.messages[history.currentId];
 			// Set all response messages to done
-			if (responseMessage.parentId && history.messages[responseMessage.parentId]) {
-				for (const messageId of history.messages[responseMessage.parentId].childrenIds) {
-					history.messages[messageId].done = true;
-				}
+			for (const messageId of history.messages[responseMessage.parentId].childrenIds) {
+				history.messages[messageId].done = true;
 			}
 
 			history.messages[history.currentId] = responseMessage;
@@ -2313,11 +2137,6 @@
 
 		if (history.currentId) {
 			let userMessage = history.messages[message.parentId];
-
-			if (!userMessage) {
-				toast.error($i18n.t('Parent message not found'));
-				return;
-			}
 
 			if (autoScroll) {
 				scrollToBottom();
@@ -2385,17 +2204,14 @@
 			generating = true;
 			const [res, controller] = await generateMoACompletion(
 				localStorage.token,
-				message.model ?? '',
-				message.parentId ? history.messages[message.parentId].content : '',
+				message.model,
+				history.messages[message.parentId].content,
 				responses
 			);
 
 			if (res && res.ok && res.body && generating) {
-				generationController = controller as AbortController;
-				const textStream = await createOpenAITextStream(
-					res.body,
-					Boolean($settings?.splitLargeChunks ?? false)
-				);
+				generationController = controller;
+				const textStream = await createOpenAITextStream(res.body, $settings.splitLargeChunks);
 				for await (const update of textStream) {
 					const { value, done, sources, error, usage } = update;
 					if (error || done) {
@@ -2482,7 +2298,7 @@
 	};
 
 	const MAX_DRAFT_LENGTH = 5000;
-	let saveDraftTimeout: ReturnType<typeof setTimeout> | null = null;
+	let saveDraftTimeout = null;
 
 	const saveDraft = async (draft, chatId = null) => {
 		if (saveDraftTimeout) {
@@ -2547,7 +2363,6 @@
 	input={eventConfirmationInput}
 	inputPlaceholder={eventConfirmationInputPlaceholder}
 	inputValue={eventConfirmationInputValue}
-	inputType={eventConfirmationInputType}
 	on:confirm={(e) => {
 		if (e.detail) {
 			eventCallback(e.detail);
@@ -2562,7 +2377,7 @@
 
 <div
 	class="h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
-		? '  md:max-w-[calc(100%-var(--sidebar-width))]'
+		? '  md:max-w-[calc(100%-260px)]'
 		: ' '} w-full max-w-full flex flex-col"
 	id="chat-container"
 >
@@ -2707,38 +2522,20 @@
 									{generating}
 									{stopResponse}
 									{createMessagePair}
-									{onUpload}
-									{messageQueue}
-									onQueueSendNow={async (id) => {
-										const item = messageQueue.find((m) => m.id === id);
-										if (item) {
-											// Remove from queue
-											messageQueue = messageQueue.filter((m) => m.id !== id);
-											// Stop current generation first
-											await stopResponse();
-											await tick();
-											// Set files and submit
-											files = item.files;
-											await tick();
-											await submitPrompt(item.prompt);
-										}
-									}}
-									onQueueEdit={(id) => {
-										const item = messageQueue.find((m) => m.id === id);
-										if (item) {
-											// Remove from queue
-											messageQueue = messageQueue.filter((m) => m.id !== id);
-											// Set files and restore prompt to input
-											files = item.files;
-											messageInput?.setText(item.prompt);
-										}
-									}}
-									onQueueDelete={(id) => {
-										messageQueue = messageQueue.filter((m) => m.id !== id);
-									}}
 									onChange={(data) => {
 										if (!$temporaryChatEnabled) {
 											saveDraft(data, $chatId);
+										}
+									}}
+									on:upload={async (e) => {
+										const { type, data } = e.detail;
+
+										if (type === 'web') {
+											await uploadWeb(data);
+										} else if (type === 'youtube') {
+											await uploadYoutubeTranscription(data);
+										} else if (type === 'google-drive') {
+											await uploadGoogleDriveFile(data);
 										}
 									}}
 									on:submit={async (e) => {
@@ -2777,10 +2574,18 @@
 									{stopResponse}
 									{createMessagePair}
 									{onSelect}
-									{onUpload}
 									onChange={(data) => {
 										if (!$temporaryChatEnabled) {
 											saveDraft(data);
+										}
+									}}
+									on:upload={async (e) => {
+										const { type, data } = e.detail;
+
+										if (type === 'web') {
+											await uploadWeb(data);
+										} else if (type === 'youtube') {
+											await uploadYoutubeTranscription(data);
 										}
 									}}
 									on:submit={async (e) => {

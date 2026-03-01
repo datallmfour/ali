@@ -50,7 +50,6 @@
 	let editedFiles = [];
 
 	let messageEditTextAreaElement: HTMLTextAreaElement;
-	let editScrollContainer: HTMLDivElement;
 
 	let message = JSON.parse(JSON.stringify(history.messages[messageId]));
 	$: if (history.messages) {
@@ -74,14 +73,10 @@
 		await tick();
 
 		if (messageEditTextAreaElement) {
-			const messagesContainer = document.getElementById('messages-container');
-			const savedScrollTop = messagesContainer?.scrollTop;
-
 			messageEditTextAreaElement.style.height = '';
 			messageEditTextAreaElement.style.height = `${messageEditTextAreaElement.scrollHeight}px`;
 
-			if (messagesContainer) messagesContainer.scrollTop = savedScrollTop;
-			messageEditTextAreaElement?.focus({ preventScroll: true });
+			messageEditTextAreaElement?.focus();
 		}
 	};
 
@@ -125,7 +120,6 @@
 	class=" flex w-full user-message group"
 	dir={$settings.chatDirection}
 	id="message-{message.id}"
-	style="scroll-margin-top: 3rem;"
 >
 	{#if !($settings?.chatBubble ?? true)}
 		<div class={`shrink-0 ltr:mr-3 rtl:ml-3 mt-1`}>
@@ -194,18 +188,11 @@
 		<div class="chat-{message.role} w-full min-w-full markdown-prose">
 			{#if edit !== true}
 				{#if message.files}
-					<div
-						class="mb-1 w-full flex flex-col justify-end overflow-x-auto gap-1 flex-wrap"
-						dir={$settings?.chatDirection ?? 'auto'}
-					>
+					<div class="mb-1 w-full flex flex-col justify-end overflow-x-auto gap-1 flex-wrap">
 						{#each message.files as file}
-							{@const fileUrl =
-								file.url?.startsWith('data') || file.url?.startsWith('http')
-									? file.url
-									: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
 							<div class={($settings?.chatBubble ?? true) ? 'self-end' : ''}>
-								{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-									<Image src={fileUrl} imageClassName=" max-h-96 rounded-lg" />
+								{#if file.type === 'image'}
+									<Image src={file.url} imageClassName=" max-h-96 rounded-lg" />
 								{:else}
 									<FileItem
 										item={file}
@@ -227,15 +214,11 @@
 					{#if (editedFiles ?? []).length > 0}
 						<div class="flex items-center flex-wrap gap-2 -mx-2 mb-1">
 							{#each editedFiles as file, fileIdx}
-								{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-									{@const fileUrl =
-										file.url?.startsWith('data') || file.url?.startsWith('http')
-											? file.url
-											: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
+								{#if file.type === 'image'}
 									<div class=" relative group">
 										<div class="relative flex items-center">
 											<Image
-												src={fileUrl}
+												src={file.url}
 												alt="input"
 												imageClassName=" size-14 rounded-xl object-cover"
 											/>
@@ -289,22 +272,15 @@
 						</div>
 					{/if}
 
-					<div class="max-h-96 overflow-auto" bind:this={editScrollContainer}>
+					<div class="max-h-96 overflow-auto">
 						<textarea
 							id="message-edit-{message.id}"
 							bind:this={messageEditTextAreaElement}
 							class=" bg-transparent outline-hidden w-full resize-none"
 							bind:value={editedContent}
 							on:input={(e) => {
-								const messagesContainer = document.getElementById('messages-container');
-								const savedScrollTop = messagesContainer?.scrollTop;
-								const savedInnerScroll = editScrollContainer?.scrollTop;
-
 								e.target.style.height = '';
 								e.target.style.height = `${e.target.scrollHeight}px`;
-
-								if (messagesContainer) messagesContainer.scrollTop = savedScrollTop;
-								if (editScrollContainer) editScrollContainer.scrollTop = savedInnerScroll;
 							}}
 							on:keydown={(e) => {
 								if (e.key === 'Escape') {

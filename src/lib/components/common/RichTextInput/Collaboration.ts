@@ -8,6 +8,7 @@ import {
 	prosemirrorJSONToYDoc
 } from 'y-prosemirror';
 import type { Socket } from 'socket.io-client';
+import type { Awareness } from 'y-protocols/awareness';
 import type { SessionUser } from '$lib/stores';
 import { Editor, Extension } from '@tiptap/core';
 import { keymap } from 'prosemirror-keymap';
@@ -71,8 +72,7 @@ export class SocketIOCollaborationProvider {
 					})
 				];
 
-				// @ts-ignore
-				plugins.push(yCursorPlugin(this.awareness));
+				plugins.push(yCursorPlugin(this.awareness as unknown as Awareness));
 
 				return plugins;
 			}
@@ -131,20 +131,9 @@ export class SocketIOCollaborationProvider {
 							const isEmptyEditor = !this.editor?.getText().trim();
 							if (isEmptyEditor && this.editor) {
 								if (this.initialContent && (data?.sessions ?? ['']).length === 1) {
-									// Check if initialContent is HTML (string) or JSON (object)
-									if (typeof this.initialContent === 'string') {
-										// HTML content - let the editor parse it, then sync to Yjs
-										this.editor.commands.setContent(this.initialContent);
-										// The Yjs plugin will automatically sync the content
-									} else {
-										// JSON content - use the existing approach
-										const editorYdoc = prosemirrorJSONToYDoc(
-											this.editor.schema,
-											this.initialContent
-										);
-										if (editorYdoc) {
-											Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(editorYdoc));
-										}
+									const editorYdoc = prosemirrorJSONToYDoc(this.editor.schema, this.initialContent);
+									if (editorYdoc) {
+										Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(editorYdoc));
 									}
 								}
 							} else {
