@@ -1,5 +1,4 @@
 <script>
-	import { onDestroy } from 'svelte';
 	import { marked } from 'marked';
 	import { replaceTokens, processResponseContent } from '$lib/utils';
 	import { user } from '$lib/stores';
@@ -35,7 +34,6 @@
 	export let onTaskClick = () => {};
 
 	let tokens = [];
-	let pendingUpdate = null;
 
 	const options = {
 		throwOnError: false,
@@ -48,34 +46,16 @@
 	marked.use(footnoteExtension(options));
 	marked.use(disableSingleTilde);
 	marked.use({
-		extensions: [
-			mentionExtension({ triggerChar: '@' }),
-			mentionExtension({ triggerChar: '#' }),
-			mentionExtension({ triggerChar: '$' })
-		]
+		extensions: [mentionExtension({ triggerChar: '@' }), mentionExtension({ triggerChar: '#' })]
 	});
 
-	const parseTokens = () => {
-		tokens = marked.lexer(replaceTokens(processResponseContent(content), model?.name, $user?.name));
-	};
-
-	// Throttle parsing to once per animation frame while streaming
-	$: if (content) {
-		if (done) {
-			cancelAnimationFrame(pendingUpdate);
-			pendingUpdate = null;
-			parseTokens();
-		} else if (!pendingUpdate) {
-			pendingUpdate = requestAnimationFrame(() => {
-				pendingUpdate = null;
-				parseTokens();
-			});
+	$: (async () => {
+		if (content) {
+			tokens = marked.lexer(
+				replaceTokens(processResponseContent(content), model?.name, $user?.name)
+			);
 		}
-	}
-
-	onDestroy(() => {
-		cancelAnimationFrame(pendingUpdate);
-	});
+	})();
 </script>
 
 {#key id}

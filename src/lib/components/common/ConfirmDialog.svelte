@@ -10,7 +10,6 @@
 	import { fade } from 'svelte/transition';
 	import { flyAndScale } from '$lib/utils/transitions';
 	import { marked } from 'marked';
-	import SensitiveInput from './SensitiveInput.svelte';
 
 	export let title = '';
 	export let message = '';
@@ -23,7 +22,6 @@
 	export let input = false;
 	export let inputPlaceholder = '';
 	export let inputValue = '';
-	export let inputType = '';
 
 	export let show = false;
 
@@ -48,8 +46,6 @@
 
 		if (event.key === 'Enter') {
 			console.log('Enter');
-			event.preventDefault();
-			event.stopPropagation();
 			confirmHandler();
 		}
 	};
@@ -85,7 +81,6 @@
 
 	onDestroy(() => {
 		show = false;
-		window.removeEventListener('keydown', handleKeyDown);
 		if (focusTrap) {
 			focusTrap.deactivate();
 		}
@@ -132,28 +127,13 @@
 						{/if}
 
 						{#if input}
-							{#if inputType === 'password'}
-								<div
-									class="w-full mt-2 rounded-lg px-4 py-2 text-sm dark:text-gray-300 dark:bg-gray-900"
-								>
-									<SensitiveInput
-										id="event-confirm-input"
-										placeholder={inputPlaceholder
-											? inputPlaceholder
-											: $i18n.t('Enter your message')}
-										bind:value={inputValue}
-										required={true}
-									/>
-								</div>
-							{:else}
-								<textarea
-									bind:value={inputValue}
-									placeholder={inputPlaceholder ? inputPlaceholder : $i18n.t('Enter your message')}
-									class="w-full mt-2 rounded-lg px-4 py-2 text-sm dark:text-gray-300 dark:bg-gray-900 outline-hidden resize-none"
-									rows="3"
-									required
-								/>
-							{/if}
+							<textarea
+								bind:value={inputValue}
+								placeholder={inputPlaceholder ? inputPlaceholder : $i18n.t('Enter your message')}
+								class="w-full mt-2 rounded-lg px-4 py-2 text-sm dark:text-gray-300 dark:bg-gray-900 outline-hidden resize-none"
+								rows="3"
+								required
+							/>
 						{/if}
 					</div>
 				</slot>

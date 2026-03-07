@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Sortable from 'sortablejs';
 
-	import { createEventDispatcher, getContext, onDestroy, onMount, tick } from 'svelte';
+	import { createEventDispatcher, getContext, onMount } from 'svelte';
 	const i18n = getContext('i18n');
 
 	import { models } from '$lib/stores';
@@ -14,27 +14,20 @@
 	let modelListElement = null;
 
 	const positionChangeHandler = () => {
-		// Read new order from DOM
-		const newOrder = Array.from(modelListElement.children).map((child) =>
+		const modelList = Array.from(modelListElement.children).map((child) =>
 			child.id.replace('model-item-', '')
 		);
 
-		// Revert SortableJS DOM manipulation so Svelte stays in control of the DOM
-		if (sortable) {
-			sortable.sort(
-				modelIds.map((id) => `model-item-${id}`),
-				true
-			);
-		}
-
-		// Update reactive data — Svelte will re-render with the new order
-		modelIds = newOrder;
+		modelIds = modelList;
 	};
 
-	const initSortable = () => {
+	$: if (modelIds) {
+		init();
+	}
+
+	const init = () => {
 		if (sortable) {
 			sortable.destroy();
-			sortable = null;
 		}
 
 		if (modelListElement) {
@@ -47,30 +40,17 @@
 			});
 		}
 	};
-
-	onMount(() => {
-		// Wait a tick for the {#if} block to render and bind modelListElement
-		tick().then(() => {
-			initSortable();
-		});
-	});
-
-	onDestroy(() => {
-		if (sortable) {
-			sortable.destroy();
-		}
-	});
 </script>
 
 {#if modelIds.length > 0}
 	<div class="flex flex-col -translate-x-1" bind:this={modelListElement}>
-		{#each modelIds as modelId (modelId)}
+		{#each modelIds as modelId, modelIdx (`${modelId}-${modelIdx}`)}
 			<div class=" flex gap-2 w-full justify-between items-center" id="model-item-{modelId}">
 				<Tooltip content={modelId} placement="top-start">
 					<div class="flex items-center gap-1">
 						<EllipsisVertical className="size-4 cursor-move model-item-handle" />
 
-						<div class=" text-sm flex-1 py-1 rounded-lg line-clamp-1">
+						<div class=" text-sm flex-1 py-1 rounded-lg">
 							{#if $models.find((model) => model.id === modelId)}
 								{$models.find((model) => model.id === modelId).name}
 							{:else}

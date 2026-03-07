@@ -8,14 +8,14 @@ import json
 
 from cryptography.fernet import Fernet
 
-from sqlalchemy.orm import Session
-from open_webui.internal.db import Base, get_db, get_db_context
-from open_webui.env import OAUTH_SESSION_TOKEN_ENCRYPTION_KEY
+from open_webui.internal.db import Base, get_db
+from open_webui.env import SRC_LOG_LEVELS, OAUTH_SESSION_TOKEN_ENCRYPTION_KEY
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import BigInteger, Column, String, Text, Index
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["MODELS"])
 
 ####################
 # DB MODEL
@@ -102,7 +102,7 @@ class OAuthSessionTable:
             decrypted = self.fernet.decrypt(token.encode()).decode()
             return json.loads(decrypted)
         except Exception as e:
-            log.error(f"Error decrypting tokens: {type(e).__name__}: {e}")
+            log.error(f"Error decrypting tokens: {e}")
             raise
 
     def create_session(
@@ -110,11 +110,10 @@ class OAuthSessionTable:
         user_id: str,
         provider: str,
         token: dict,
-        db: Optional[Session] = None,
     ) -> Optional[OAuthSessionModel]:
         """Create a new OAuth session"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 current_time = int(time.time())
                 id = str(uuid.uuid4())
 
@@ -135,7 +134,6 @@ class OAuthSessionTable:
                 db.refresh(result)
 
                 if result:
-                    db.expunge(result)  # Detach so dict swap is never flushed
                     result.token = token  # Return decrypted token
                     return OAuthSessionModel.model_validate(result)
                 else:
@@ -144,15 +142,12 @@ class OAuthSessionTable:
             log.error(f"Error creating OAuth session: {e}")
             return None
 
-    def get_session_by_id(
-        self, session_id: str, db: Optional[Session] = None
-    ) -> Optional[OAuthSessionModel]:
+    def get_session_by_id(self, session_id: str) -> Optional[OAuthSessionModel]:
         """Get OAuth session by ID"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 session = db.query(OAuthSession).filter_by(id=session_id).first()
                 if session:
-                    db.expunge(session)
                     session.token = self._decrypt_token(session.token)
                     return OAuthSessionModel.model_validate(session)
 
@@ -162,18 +157,17 @@ class OAuthSessionTable:
             return None
 
     def get_session_by_id_and_user_id(
-        self, session_id: str, user_id: str, db: Optional[Session] = None
+        self, session_id: str, user_id: str
     ) -> Optional[OAuthSessionModel]:
         """Get OAuth session by ID and user ID"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 session = (
                     db.query(OAuthSession)
                     .filter_by(id=session_id, user_id=user_id)
                     .first()
                 )
                 if session:
-                    db.expunge(session)
                     session.token = self._decrypt_token(session.token)
                     return OAuthSessionModel.model_validate(session)
 
@@ -183,19 +177,17 @@ class OAuthSessionTable:
             return None
 
     def get_session_by_provider_and_user_id(
-        self, provider: str, user_id: str, db: Optional[Session] = None
+        self, provider: str, user_id: str
     ) -> Optional[OAuthSessionModel]:
         """Get OAuth session by provider and user ID"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 session = (
                     db.query(OAuthSession)
                     .filter_by(provider=provider, user_id=user_id)
-                    .order_by(OAuthSession.created_at.desc())
                     .first()
                 )
                 if session:
-                    db.expunge(session)
                     session.token = self._decrypt_token(session.token)
                     return OAuthSessionModel.model_validate(session)
 
@@ -204,26 +196,16 @@ class OAuthSessionTable:
             log.error(f"Error getting OAuth session by provider and user ID: {e}")
             return None
 
-    def get_sessions_by_user_id(
-        self, user_id: str, db: Optional[Session] = None
-    ) -> List[OAuthSessionModel]:
+    def get_sessions_by_user_id(self, user_id: str) -> List[OAuthSessionModel]:
         """Get all OAuth sessions for a user"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 sessions = db.query(OAuthSession).filter_by(user_id=user_id).all()
 
                 results = []
                 for session in sessions:
-                    try:
-                        db.expunge(session)
-                        session.token = self._decrypt_token(session.token)
-                        results.append(OAuthSessionModel.model_validate(session))
-                    except Exception as e:
-                        log.warning(
-                            f"Skipping OAuth session {session.id} due to decryption failure, deleting corrupted session: {type(e).__name__}: {e}"
-                        )
-                        db.query(OAuthSession).filter_by(id=session.id).delete()
-                        db.commit()
+                    session.token = self._decrypt_token(session.token)
+                    results.append(OAuthSessionModel.model_validate(session))
 
                 return results
 
@@ -232,11 +214,11 @@ class OAuthSessionTable:
             return []
 
     def update_session_by_id(
-        self, session_id: str, token: dict, db: Optional[Session] = None
+        self, session_id: str, token: dict
     ) -> Optional[OAuthSessionModel]:
         """Update OAuth session tokens"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 current_time = int(time.time())
 
                 db.query(OAuthSession).filter_by(id=session_id).update(
@@ -250,7 +232,6 @@ class OAuthSessionTable:
                 session = db.query(OAuthSession).filter_by(id=session_id).first()
 
                 if session:
-                    db.expunge(session)
                     session.token = self._decrypt_token(session.token)
                     return OAuthSessionModel.model_validate(session)
 
@@ -259,12 +240,10 @@ class OAuthSessionTable:
             log.error(f"Error updating OAuth session tokens: {e}")
             return None
 
-    def delete_session_by_id(
-        self, session_id: str, db: Optional[Session] = None
-    ) -> bool:
+    def delete_session_by_id(self, session_id: str) -> bool:
         """Delete an OAuth session"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 result = db.query(OAuthSession).filter_by(id=session_id).delete()
                 db.commit()
                 return result > 0
@@ -272,12 +251,10 @@ class OAuthSessionTable:
             log.error(f"Error deleting OAuth session: {e}")
             return False
 
-    def delete_sessions_by_user_id(
-        self, user_id: str, db: Optional[Session] = None
-    ) -> bool:
+    def delete_sessions_by_user_id(self, user_id: str) -> bool:
         """Delete all OAuth sessions for a user"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 result = db.query(OAuthSession).filter_by(user_id=user_id).delete()
                 db.commit()
                 return True
@@ -285,12 +262,10 @@ class OAuthSessionTable:
             log.error(f"Error deleting OAuth sessions by user ID: {e}")
             return False
 
-    def delete_sessions_by_provider(
-        self, provider: str, db: Optional[Session] = None
-    ) -> bool:
+    def delete_sessions_by_provider(self, provider: str) -> bool:
         """Delete all OAuth sessions for a provider"""
         try:
-            with get_db_context(db) as db:
+            with get_db() as db:
                 db.query(OAuthSession).filter_by(provider=provider).delete()
                 db.commit()
                 return True

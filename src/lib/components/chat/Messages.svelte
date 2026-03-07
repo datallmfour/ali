@@ -9,7 +9,7 @@
 		currentChatPage,
 		temporaryChatEnabled
 	} from '$lib/stores';
-	import { tick, getContext, onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import { tick, getContext, onMount, createEventDispatcher } from 'svelte';
 	const dispatch = createEventDispatcher();
 
 	import { toast } from 'svelte-sonner';
@@ -67,64 +67,25 @@
 
 		messagesLoading = true;
 		messagesCount += 20;
-		buildMessages();
 
 		await tick();
 
 		messagesLoading = false;
 	};
 
-	let pendingRebuild = null;
-	let lastCurrentId = null;
-
-	const buildMessages = () => {
+	$: if (history.currentId) {
 		let _messages = [];
 
 		let message = history.messages[history.currentId];
-		const visitedMessageIds = new Set();
-
 		while (message && (messagesCount !== null ? _messages.length <= messagesCount : true)) {
-			if (visitedMessageIds.has(message.id)) {
-				console.warn('Circular dependency detected in message history', message.id);
-				break;
-			}
-			visitedMessageIds.add(message.id);
-
-			_messages.unshift(message);
+			_messages.unshift({ ...message });
 			message = message.parentId !== null ? history.messages[message.parentId] : null;
 		}
 
 		messages = _messages;
-	};
-
-	// Throttle message list rebuilds to once per animation frame during streaming.
-	// Structural changes (currentId change) always rebuild immediately.
-	const handleHistoryChange = (currentId, _messages) => {
-		if (!currentId) {
-			messages = [];
-			return;
-		}
-
-		const currentIdChanged = currentId !== lastCurrentId;
-		lastCurrentId = currentId;
-
-		if (currentIdChanged) {
-			// Structural change: new chat, navigation, new message — rebuild immediately
-			cancelAnimationFrame(pendingRebuild);
-			pendingRebuild = null;
-			buildMessages();
-		} else if (_messages) {
-			// Content update (streaming) — throttle to once per frame
-			if (!pendingRebuild) {
-				pendingRebuild = requestAnimationFrame(() => {
-					pendingRebuild = null;
-					buildMessages();
-				});
-			}
-		}
-	};
-
-	$: handleHistoryChange(history.currentId, history.messages);
+	} else {
+		messages = [];
+	}
 
 	$: if (autoScroll && bottomPadding) {
 		(async () => {
@@ -385,10 +346,6 @@
 	};
 
 	const saveMessage = async (messageId, message) => {
-		if (!history.messages?.[messageId]) {
-			return;
-		}
-
 		history.messages[messageId] = message;
 		await updateChat();
 	};
@@ -423,12 +380,13 @@
 			delete history.messages[id];
 		});
 
-		showMessage({ id: parentMessageId }, false);
-	};
+		await tick();
 
-	onDestroy(() => {
-		cancelAnimationFrame(pendingRebuild);
-	});
+		showMessage({ id: parentMessageId });
+
+		// Update the chat
+		await updateChat();
+	};
 
 	const triggerScroll = () => {
 		if (autoScroll) {

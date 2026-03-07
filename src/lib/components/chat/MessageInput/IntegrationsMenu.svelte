@@ -4,15 +4,7 @@
 	import { fly } from 'svelte/transition';
 	import { flyAndScale } from '$lib/utils/transitions';
 
-	import {
-		config,
-		user,
-		tools as _tools,
-		mobile,
-		settings,
-		toolServers,
-		terminalServers
-	} from '$lib/stores';
+	import { config, user, tools as _tools, mobile, settings, toolServers } from '$lib/stores';
 
 	import { getOAuthClientAuthorizationUrl } from '$lib/apis/configs';
 	import { getTools } from '$lib/apis/tools';
@@ -170,7 +162,7 @@
 													<div class="size-4 items-center flex justify-center">
 														<img
 															src={filter.icon}
-															class="size-3.5 {filter.icon.includes('data:image/svg')
+															class="size-3.5 {filter.icon.includes('svg')
 																? 'dark:invert-[80%]'
 																: ''}"
 															style="fill: currentColor;"
@@ -186,7 +178,7 @@
 										</div>
 									</div>
 
-									{#if filter?.has_user_valves && ($user?.role === 'admin' || ($user?.permissions?.chat?.valves ?? true))}
+									{#if filter?.has_user_valves}
 										<div class=" shrink-0">
 											<Tooltip content={$i18n.t('Valves')}>
 												<button
@@ -379,7 +371,7 @@
 								</div>
 							</div>
 
-							{#if tools[toolId]?.has_user_valves && ($user?.role === 'admin' || ($user?.permissions?.chat?.valves ?? true))}
+							{#if tools[toolId]?.has_user_valves}
 								<div class=" shrink-0">
 									<Tooltip content={$i18n.t('Valves')}>
 										<button

@@ -9,9 +9,11 @@ import urllib.request
 from typing import Optional
 
 import websocket  # NOTE: websocket-client (https://github.com/websocket-client/websocket-client)
+from open_webui.env import SRC_LOG_LEVELS
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["COMFYUI"])
 
 default_headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -64,8 +66,8 @@ def get_history(prompt_id, base_url, api_key):
         return json.loads(response.read())
 
 
-def get_images(ws, workflow, client_id, base_url, api_key):
-    prompt_id = queue_prompt(workflow, client_id, base_url, api_key)["prompt_id"]
+def get_images(ws, prompt, client_id, base_url, api_key):
+    prompt_id = queue_prompt(prompt, client_id, base_url, api_key)["prompt_id"]
     output_images = []
     while True:
         out = ws.recv()
@@ -79,12 +81,9 @@ def get_images(ws, workflow, client_id, base_url, api_key):
             continue  # previews are binary data
 
     history = get_history(prompt_id, base_url, api_key)[prompt_id]
-    for node_id in history["outputs"]:
-        node_output = history["outputs"][node_id]
-        if node_id in workflow and workflow[node_id].get("class_type") in [
-            "SaveImage",
-            "PreviewImage",
-        ]:
+    for o in history["outputs"]:
+        for node_id in history["outputs"]:
+            node_output = history["outputs"][node_id]
             if "images" in node_output:
                 for image in node_output["images"]:
                     url = get_image_url(
