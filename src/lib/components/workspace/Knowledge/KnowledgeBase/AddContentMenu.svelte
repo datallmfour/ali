@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { DropdownMenu } from 'bits-ui';
+	import { flyAndScale } from '$lib/utils/transitions';
 	import { getContext, createEventDispatcher } from 'svelte';
 	const dispatch = createEventDispatcher();
 
@@ -8,22 +10,18 @@
 	import BarsArrowUp from '$lib/components/icons/BarsArrowUp.svelte';
 	import FolderOpen from '$lib/components/icons/FolderOpen.svelte';
 	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
-	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 
 	const i18n = getContext('i18n');
 
 	export let onClose: Function = () => {};
-
-	export let onSync: Function = () => {};
-	export let onUpload: Function = (data) => {};
 
 	let show = false;
 </script>
 
 <Dropdown
 	bind:show
-	onOpenChange={(state) => {
-		if (state === false) {
+	on:change={(e) => {
+		if (e.detail === false) {
 			onClose();
 		}
 	}}
@@ -51,28 +49,32 @@
 	</Tooltip>
 
 	<div slot="content">
-		<div
-			class="min-w-[200px] rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg transition"
+		<DropdownMenu.Content
+			class="w-full max-w-44 rounded-xl p-1 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-sm"
+			sideOffset={4}
+			side="bottom"
+			align="end"
+			transition={flyAndScale}
 		>
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				on:click={() => {
-					onUpload({ type: 'files' });
+					dispatch('upload', { type: 'files' });
 				}}
 			>
 				<ArrowUpCircle strokeWidth="2" />
 				<div class="flex items-center">{$i18n.t('Upload files')}</div>
-			</button>
+			</DropdownMenu.Item>
 
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				on:click={() => {
-					onUpload({ type: 'directory' });
+					dispatch('upload', { type: 'directory' });
 				}}
 			>
 				<FolderOpen strokeWidth="2" />
 				<div class="flex items-center">{$i18n.t('Upload directory')}</div>
-			</button>
+			</DropdownMenu.Item>
 
 			<Tooltip
 				content={$i18n.t(
@@ -80,36 +82,26 @@
 				)}
 				className="w-full"
 			>
-				<button
-					class="select-none flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
+				<DropdownMenu.Item
+					class="flex  gap-2  items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 					on:click={() => {
-						onSync();
+						dispatch('sync', { type: 'directory' });
 					}}
 				>
 					<ArrowPath strokeWidth="2" />
 					<div class="flex items-center">{$i18n.t('Sync directory')}</div>
-				</button>
+				</DropdownMenu.Item>
 			</Tooltip>
 
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				on:click={() => {
-					onUpload({ type: 'web' });
-				}}
-			>
-				<GlobeAlt strokeWidth="2" />
-				<div class="flex items-center">{$i18n.t('Add webpage')}</div>
-			</button>
-
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
-				on:click={() => {
-					onUpload({ type: 'text' });
+					dispatch('upload', { type: 'text' });
 				}}
 			>
 				<BarsArrowUp strokeWidth="2" />
 				<div class="flex items-center">{$i18n.t('Add text content')}</div>
-			</button>
-		</div>
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
 	</div>
 </Dropdown>

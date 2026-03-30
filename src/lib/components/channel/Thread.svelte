@@ -84,10 +84,6 @@
 					}
 				}
 			} else if (type === 'message:delete') {
-				if (data.id === threadId) {
-					onClose();
-				}
-
 				if (messages) {
 					messages = messages.filter((message) => message.id !== data.id);
 				}
@@ -227,7 +223,6 @@
 					bind:replyToMessage
 					bind:chatInputElement
 					id={threadId}
-					{channel}
 					disabled={!channel?.write_access}
 					placeholder={!channel?.write_access
 						? $i18n.t('You do not have permission to send messages in this thread.')
