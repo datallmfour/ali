@@ -29,6 +29,7 @@ from contextlib import suppress
 import peewee as pw
 from peewee_migrate import Migrator
 
+
 with suppress(ImportError):
     import playhouse.postgres_ext as pw_pext
 
@@ -56,7 +57,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         active = pw.BooleanField()
 
         class Meta:
-            table_name = 'auth'
+            table_name = "auth"
 
     @migrator.create_model
     class Chat(pw.Model):
@@ -67,7 +68,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'chat'
+            table_name = "chat"
 
     @migrator.create_model
     class ChatIdTag(pw.Model):
@@ -78,7 +79,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'chatidtag'
+            table_name = "chatidtag"
 
     @migrator.create_model
     class Document(pw.Model):
@@ -92,7 +93,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'document'
+            table_name = "document"
 
     @migrator.create_model
     class Modelfile(pw.Model):
@@ -103,7 +104,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'modelfile'
+            table_name = "modelfile"
 
     @migrator.create_model
     class Prompt(pw.Model):
@@ -115,7 +116,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'prompt'
+            table_name = "prompt"
 
     @migrator.create_model
     class Tag(pw.Model):
@@ -125,7 +126,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         data = pw.TextField(null=True)
 
         class Meta:
-            table_name = 'tag'
+            table_name = "tag"
 
     @migrator.create_model
     class User(pw.Model):
@@ -137,7 +138,7 @@ def migrate_sqlite(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'user'
+            table_name = "user"
 
 
 def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
@@ -149,7 +150,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         active = pw.BooleanField()
 
         class Meta:
-            table_name = 'auth'
+            table_name = "auth"
 
     @migrator.create_model
     class Chat(pw.Model):
@@ -160,7 +161,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'chat'
+            table_name = "chat"
 
     @migrator.create_model
     class ChatIdTag(pw.Model):
@@ -171,7 +172,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'chatidtag'
+            table_name = "chatidtag"
 
     @migrator.create_model
     class Document(pw.Model):
@@ -185,7 +186,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'document'
+            table_name = "document"
 
     @migrator.create_model
     class Modelfile(pw.Model):
@@ -196,7 +197,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'modelfile'
+            table_name = "modelfile"
 
     @migrator.create_model
     class Prompt(pw.Model):
@@ -208,7 +209,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'prompt'
+            table_name = "prompt"
 
     @migrator.create_model
     class Tag(pw.Model):
@@ -218,7 +219,7 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         data = pw.TextField(null=True)
 
         class Meta:
-            table_name = 'tag'
+            table_name = "tag"
 
     @migrator.create_model
     class User(pw.Model):
@@ -230,24 +231,24 @@ def migrate_external(migrator: Migrator, database: pw.Database, *, fake=False):
         timestamp = pw.BigIntegerField()
 
         class Meta:
-            table_name = 'user'
+            table_name = "user"
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your rollback migrations here."""
 
-    migrator.remove_model('user')
+    migrator.remove_model("user")
 
-    migrator.remove_model('tag')
+    migrator.remove_model("tag")
 
-    migrator.remove_model('prompt')
+    migrator.remove_model("prompt")
 
-    migrator.remove_model('modelfile')
+    migrator.remove_model("modelfile")
 
-    migrator.remove_model('document')
+    migrator.remove_model("document")
 
-    migrator.remove_model('chatidtag')
+    migrator.remove_model("chatidtag")
 
-    migrator.remove_model('chat')
+    migrator.remove_model("chat")
 
-    migrator.remove_model('auth')
+    migrator.remove_model("auth")
