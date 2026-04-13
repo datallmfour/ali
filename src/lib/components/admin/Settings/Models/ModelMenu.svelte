@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { DropdownMenu } from 'bits-ui';
+	import { flyAndScale } from '$lib/utils/transitions';
 	import { getContext } from 'svelte';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
@@ -11,10 +13,8 @@
 	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
 	import ArrowUpCircle from '$lib/components/icons/ArrowUpCircle.svelte';
-	import Pin from '$lib/components/icons/Pin.svelte';
-	import PinSlash from '$lib/components/icons/PinSlash.svelte';
 
-	import { config, settings } from '$lib/stores';
+	import { config } from '$lib/stores';
 	import Link from '$lib/components/icons/Link.svelte';
 
 	const i18n = getContext('i18n');
@@ -24,7 +24,6 @@
 
 	export let exportHandler: Function;
 	export let hideHandler: Function;
-	export let pinModelHandler: Function;
 	export let copyLinkHandler: Function;
 	export let cloneHandler: Function;
 
@@ -35,8 +34,8 @@
 
 <Dropdown
 	bind:show
-	onOpenChange={(state) => {
-		if (state === false) {
+	on:change={(e) => {
+		if (e.detail === false) {
 			onClose();
 		}
 	}}
@@ -46,11 +45,15 @@
 	</Tooltip>
 
 	<div slot="content">
-		<div
-			class="min-w-[170px] rounded-xl p-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-sm"
+		<DropdownMenu.Content
+			class="w-full max-w-[170px] rounded-xl p-1 border border-gray-100  dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-sm"
+			sideOffset={-2}
+			side="bottom"
+			align="start"
+			transition={flyAndScale}
 		>
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-1.5 text-sm  font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				on:click={() => {
 					hideHandler();
 				}}
@@ -99,31 +102,10 @@
 						{$i18n.t('Hide Model')}
 					{/if}
 				</div>
-			</button>
+			</DropdownMenu.Item>
 
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
-				on:click={() => {
-					pinModelHandler(model?.id);
-				}}
-			>
-				{#if ($settings?.pinnedModels ?? []).includes(model?.id)}
-					<PinSlash />
-				{:else}
-					<Pin />
-				{/if}
-
-				<div class="flex items-center">
-					{#if ($settings?.pinnedModels ?? []).includes(model?.id)}
-						{$i18n.t('Hide from Sidebar')}
-					{:else}
-						{$i18n.t('Keep in Sidebar')}
-					{/if}
-				</div>
-			</button>
-
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm  font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				on:click={() => {
 					copyLinkHandler();
 				}}
@@ -131,23 +113,21 @@
 				<Link />
 
 				<div class="flex items-center">{$i18n.t('Copy Link')}</div>
-			</button>
+			</DropdownMenu.Item>
 
-			{#if model?.is_active ?? true}
-				<button
-					class="select-none flex gap-2 items-center px-3 py-1.5 text-sm font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
-					on:click={() => {
-						cloneHandler();
-					}}
-				>
-					<DocumentDuplicate />
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm  font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+				on:click={() => {
+					cloneHandler();
+				}}
+			>
+				<DocumentDuplicate />
 
-					<div class="flex items-center">{$i18n.t('Clone')}</div>
-				</button>
-			{/if}
+				<div class="flex items-center">{$i18n.t('Clone')}</div>
+			</DropdownMenu.Item>
 
-			<button
-				class="select-none flex gap-2 items-center px-3 py-1.5 text-sm font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm  font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				on:click={() => {
 					exportHandler();
 				}}
@@ -155,7 +135,7 @@
 				<Download />
 
 				<div class="flex items-center">{$i18n.t('Export')}</div>
-			</button>
-		</div>
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
 	</div>
 </Dropdown>

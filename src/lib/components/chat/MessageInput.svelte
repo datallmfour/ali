@@ -1,22 +1,14 @@
 <script lang="ts">
 	import DOMPurify from 'dompurify';
+	import { marked } from 'marked';
+
 	import { toast } from 'svelte-sonner';
 
-	import { marked } from 'marked';
 	import { v4 as uuidv4 } from 'uuid';
-	import dayjs from '$lib/dayjs';
-	import duration from 'dayjs/plugin/duration';
-	import relativeTime from 'dayjs/plugin/relativeTime';
-
-	dayjs.extend(duration);
-	dayjs.extend(relativeTime);
-
-	import { onMount, tick, getContext, createEventDispatcher } from 'svelte';
-
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
-	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 
+	import { onMount, tick, getContext, createEventDispatcher, onDestroy } from 'svelte';
 	const dispatch = createEventDispatcher();
 
 	import {
@@ -28,11 +20,8 @@
 		showCallOverlay,
 		tools,
 		toolServers,
-		terminalServers,
 		user as _user,
 		showControls,
-		showSettings,
-		selectedTerminalId,
 		TTSWorker,
 		temporaryChatEnabled
 	} from '$lib/stores';
@@ -55,62 +44,51 @@
 	import { uploadFile } from '$lib/apis/files';
 	import { generateAutoCompletion } from '$lib/apis';
 	import { deleteFileById } from '$lib/apis/files';
-	import { getChatById } from '$lib/apis/chats';
 	import { getSessionUser } from '$lib/apis/auths';
 	import { getTools } from '$lib/apis/tools';
 
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
-	import { getOAuthClientAuthorizationUrl } from '$lib/apis/configs';
-
-	import { createNoteHandler } from '../notes/utils';
-	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
 
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
-
+	import FilesOverlay from './MessageInput/FilesOverlay.svelte';
 	import ToolServersModal from './ToolServersModal.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import FileItem from '../common/FileItem.svelte';
 	import Image from '../common/Image.svelte';
-	import Spinner from '../common/Spinner.svelte';
 
 	import XMark from '../icons/XMark.svelte';
+	import Headphone from '../icons/Headphone.svelte';
 	import GlobeAlt from '../icons/GlobeAlt.svelte';
 	import Photo from '../icons/Photo.svelte';
 	import Wrench from '../icons/Wrench.svelte';
+	import CommandLine from '../icons/CommandLine.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
 
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
 	import Voice from '../icons/Voice.svelte';
 	import Terminal from '../icons/Terminal.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
-	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
 	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
-	import Dropdown from '../common/Dropdown.svelte';
 
+	import { KokoroWorker } from '$lib/workers/KokoroWorker';
+
+	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
 	import CommandSuggestionList from './MessageInput/CommandSuggestionList.svelte';
 	import Knobs from '../icons/Knobs.svelte';
 	import ValvesModal from '../workspace/common/ValvesModal.svelte';
-	import Note from '../icons/Note.svelte';
-	import { goto } from '$app/navigation';
-	import InputModal from '../common/InputModal.svelte';
-	import Expand from '../icons/Expand.svelte';
-	import QueuedMessageItem from './MessageInput/QueuedMessageItem.svelte';
 
 	const i18n = getContext('i18n');
 
-	export let onUpload: Function = (e) => {};
 	export let onChange: Function = () => {};
-
 	export let createMessagePair: Function;
 	export let stopResponse: Function;
 
 	export let autoScroll = false;
 	export let generating = false;
-	export let uploadPending = false;
 
 	export let atSelectedModel: Model | undefined = undefined;
 	export let selectedModels: [''];
@@ -130,17 +108,6 @@
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
-
-	export let pendingOAuthTools = [];
-
-	let showTerminalMenu = false;
-
-	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
-	export let onQueueSendNow: (id: string) => void = () => {};
-	export let onQueueEdit: (id: string) => void = () => {};
-	export let onQueueDelete: (id: string) => void = () => {};
-
-	let inputContent = null;
 
 	let showInputVariablesModal = false;
 	let inputVariablesModalCallback = (variableValues) => {};
@@ -164,7 +131,7 @@
 				return {
 					...file,
 					user: undefined,
-					access_grants: undefined
+					access_control: undefined
 				};
 			}),
 		selectedToolIds,
@@ -210,16 +177,22 @@
 				for (const type of item.types) {
 					if (type.startsWith('image/')) {
 						const blob = await item.getType(type);
-						const file = new File([blob], `clipboard-image.${type.split('/')[1]}`, {
-							type: type
-						});
-
-						inputFilesHandler([file]);
+						const reader = new FileReader();
+						reader.onload = (event) => {
+							files = [
+								...files,
+								{
+									type: 'image',
+									url: event.target.result as string
+								}
+							];
+						};
+						reader.readAsDataURL(blob);
 					}
 				}
 			}
 
-			text = text.replaceAll('{{CLIPBOARD}}', clipboardText.replaceAll('\r\n', '\n'));
+			text = text.replaceAll('{{CLIPBOARD}}', clipboardText);
 		}
 
 		if (text.includes('{{USER_LOCATION}}')) {
@@ -238,14 +211,6 @@
 		if (text.includes('{{USER_NAME}}')) {
 			const name = sessionUser?.name || 'User';
 			text = text.replaceAll('{{USER_NAME}}', name);
-		}
-
-		if (text.includes('{{USER_EMAIL}}')) {
-			const email = sessionUser?.email || '';
-
-			if (email) {
-				text = text.replaceAll('{{USER_EMAIL}}', email);
-			}
 		}
 
 		if (text.includes('{{USER_BIO}}')) {
@@ -403,8 +368,7 @@
 
 	let command = '';
 	export let showCommands = false;
-	$: showCommands =
-		['/', '#', '@', '$'].includes(command?.charAt(0)) || '\\#' === command?.slice(0, 2);
+	$: showCommands = ['/', '#', '@'].includes(command?.charAt(0)) || '\\#' === command?.slice(0, 2);
 	let suggestions = null;
 
 	let showTools = false;
@@ -446,9 +410,7 @@
 
 	let inputFiles;
 
-	let showInputModal = false;
-
-	export let dragged = false;
+	let dragged = false;
 	let shiftKey = false;
 
 	let user = null;
@@ -509,16 +471,10 @@
 
 	let showCodeInterpreterButton = false;
 	$: showCodeInterpreterButton =
-		!$selectedTerminalId &&
 		(atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).length ===
 			codeInterpreterCapableModels.length &&
 		$config?.features?.enable_code_interpreter &&
 		($_user.role === 'admin' || $_user?.permissions?.features?.code_interpreter);
-
-	// Disable code interpreter when terminal is active (mutually exclusive)
-	$: if ($selectedTerminalId && codeInterpreterEnabled) {
-		codeInterpreterEnabled = false;
-	}
 
 	const scrollToBottom = () => {
 		const element = document.getElementById('messages-container');
@@ -555,9 +511,8 @@
 
 			// Convert the canvas to a Base64 image URL
 			const imageUrl = canvas.toDataURL('image/png');
-			const blob = await (await fetch(imageUrl)).blob();
-			const file = new File([blob], `screen-capture-${Date.now()}.png`, { type: 'image/png' });
-			inputFilesHandler([file]);
+			// Add the captured image to the files array to render it
+			files = [...files, { type: 'image', url: imageUrl }];
 			// Clean memory: Clear video srcObject
 			video.srcObject = null;
 		} catch (error) {
@@ -566,7 +521,7 @@
 		}
 	};
 
-	const uploadFileHandler = async (file, process = true, itemData = {}) => {
+	const uploadFileHandler = async (file, fullContext: boolean = false) => {
 		if ($_user?.role !== 'admin' && !($_user?.permissions?.chat?.file_upload ?? true)) {
 			toast.error($i18n.t('You do not have permission to upload files.'));
 			return null;
@@ -589,7 +544,7 @@
 			size: file.size,
 			error: '',
 			itemId: tempItemId,
-			...itemData
+			...(fullContext ? { context: 'full' } : {})
 		};
 
 		if (fileItem.size == 0) {
@@ -613,7 +568,7 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+				const uploadedFile = await uploadFile(localStorage.token, file, metadata);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -632,8 +587,7 @@
 					fileItem.id = uploadedFile.id;
 					fileItem.collection_name =
 						uploadedFile?.meta?.collection_name || uploadedFile?.collection_name;
-					fileItem.content_type = uploadedFile.meta?.content_type || uploadedFile.content_type;
-					fileItem.url = `${uploadedFile.id}`;
+					fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
 
 					files = files;
 				} else {
@@ -756,29 +710,19 @@
 				};
 
 				let reader = new FileReader();
-
 				reader.onload = async (event) => {
 					let imageUrl = event.target.result;
 
-					// Compress the image if settings or config require it
 					imageUrl = await compressImageHandler(imageUrl, $settings, $config);
 
-					if ($temporaryChatEnabled) {
-						files = [
-							...files,
-							{
-								type: 'image',
-								url: imageUrl
-							}
-						];
-					} else {
-						const blob = await (await fetch(imageUrl)).blob();
-						const compressedFile = new File([blob], file.name, { type: file.type });
-
-						uploadFileHandler(compressedFile, false);
-					}
+					files = [
+						...files,
+						{
+							type: 'image',
+							url: `${imageUrl}`
+						}
+					];
 				};
-
 				reader.readAsDataURL(file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file);
 			} else {
 				uploadFileHandler(file);
@@ -786,75 +730,24 @@
 		});
 	};
 
-	const createNote = async () => {
-		if (inputContent?.md.trim() === '' && inputContent?.html.trim() === '') {
-			toast.error($i18n.t('Cannot create an empty note.'));
-			return;
-		}
-
-		const res = await createNoteHandler(
-			dayjs().format('YYYY-MM-DD'),
-			inputContent?.md,
-			inputContent?.html
-		);
-
-		if (res) {
-			// Clear the input content saved in session storage.
-			sessionStorage.removeItem('chat-input');
-			goto(`/notes/${res.id}`);
-		}
-	};
-
-	const onDragOver = (e: DragEvent) => {
+	const onDragOver = (e) => {
 		e.preventDefault();
 
-		// Check if a file or a sidebar chat item is being dragged.
-		if (e.dataTransfer?.types?.includes('Files') || e.dataTransfer?.types?.includes('text/plain')) {
+		// Check if a file is being dragged.
+		if (e.dataTransfer?.types?.includes('Files')) {
 			dragged = true;
 		} else {
 			dragged = false;
 		}
 	};
 
-	const onDragLeave = (e: DragEvent) => {
-		if ((e.currentTarget as HTMLElement)?.contains(e.relatedTarget as Node)) {
-			return;
-		}
+	const onDragLeave = () => {
 		dragged = false;
 	};
 
-	const onDrop = async (e: DragEvent) => {
+	const onDrop = async (e) => {
 		e.preventDefault();
 		console.log(e);
-
-		// Check if the dropped data is a sidebar chat item
-		const textData = e.dataTransfer?.getData('text/plain');
-		if (textData) {
-			try {
-				const data = JSON.parse(textData);
-				if (data.type === 'chat' && data.id) {
-					// Fetch the chat to get its title, then add as a reference chat
-					const chat = await getChatById(localStorage.token, data.id);
-					if (chat) {
-						const chatItem = {
-							type: 'chat',
-							id: chat.id,
-							name: chat.title,
-							collection_name: '',
-							status: 'processed'
-						};
-						if (!files.find((f) => f.id === chatItem.id)) {
-							files = [...files, chatItem];
-						}
-					}
-					dragged = false;
-					e.stopPropagation();
-					return;
-				}
-			} catch (_) {
-				// Not valid JSON — fall through to file handling
-			}
-		}
 
 		if (e.dataTransfer?.files) {
 			const inputFiles = Array.from(e.dataTransfer?.files);
@@ -867,22 +760,9 @@
 		dragged = false;
 	};
 
-	const onKeyDown = (e: KeyboardEvent) => {
+	const onKeyDown = (e) => {
 		if (e.key === 'Shift') {
 			shiftKey = true;
-		}
-
-		// Cmd/Ctrl+Shift+L to toggle dictation
-		if (e.key.toLowerCase() === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
-			e.preventDefault();
-			if (recording) {
-				// Confirm and stop recording
-				document.getElementById('confirm-recording-button')?.click();
-			} else {
-				// Start recording (same logic as voice-input-button click)
-				document.getElementById('voice-input-button')?.click();
-			}
-			return;
 		}
 
 		if (e.key === 'Escape') {
@@ -891,7 +771,7 @@
 		}
 	};
 
-	const onKeyUp = (e: KeyboardEvent) => {
+	const onKeyUp = (e) => {
 		if (e.key === 'Shift') {
 			shiftKey = false;
 		}
@@ -903,7 +783,7 @@
 		shiftKey = false;
 	};
 
-	onMount(() => {
+	onMount(async () => {
 		suggestions = [
 			{
 				char: '@',
@@ -935,10 +815,7 @@
 								}
 							];
 						} else {
-							if (files.find((f) => f.url === data || f.name === data)) {
-								return;
-							}
-							onUpload(e);
+							dispatch('upload', e);
 						}
 					}
 				})
@@ -973,10 +850,7 @@
 								}
 							];
 						} else {
-							if (files.find((f) => f.url === data || f.name === data)) {
-								return;
-							}
-							onUpload(e);
+							dispatch('upload', e);
 						}
 					}
 				})
@@ -1011,24 +885,9 @@
 								}
 							];
 						} else {
-							if (files.find((f) => f.url === data || f.name === data)) {
-								return;
-							}
-							onUpload(e);
+							dispatch('upload', e);
 						}
 					}
-				})
-			},
-			{
-				char: '$',
-				render: getSuggestionRenderer(CommandSuggestionList, {
-					i18n,
-					onSelect: (e) => {
-						document.getElementById('chat-input')?.focus();
-					},
-
-					insertTextHandler: insertTextAtCursor,
-					onUpload: () => {}
 				})
 			}
 		];
@@ -1045,41 +904,36 @@
 		window.addEventListener('focus', onFocus);
 		window.addEventListener('blur', onBlur);
 
-		let isDestroyed = false;
-		let dropzoneElement: HTMLElement | null = null;
-		const initialize = async () => {
-			await tick();
-			if (isDestroyed) return;
+		await tick();
 
-			dropzoneElement = document.getElementById('chat-pane');
-			if (dropzoneElement) {
-				dropzoneElement.addEventListener('dragover', onDragOver, true);
-				dropzoneElement.addEventListener('drop', onDrop, true);
-				dropzoneElement.addEventListener('dragleave', onDragLeave);
-			}
+		const dropzoneElement = document.getElementById('chat-container');
 
-			tools.set(await getTools(localStorage.token));
-		};
-		initialize();
+		dropzoneElement?.addEventListener('dragover', onDragOver);
+		dropzoneElement?.addEventListener('drop', onDrop);
+		dropzoneElement?.addEventListener('dragleave', onDragLeave);
 
-		return () => {
-			isDestroyed = true;
+		await tools.set(await getTools(localStorage.token));
+	});
 
-			window.removeEventListener('keydown', onKeyDown);
-			window.removeEventListener('keyup', onKeyUp);
+	onDestroy(() => {
+		console.log('destroy');
+		window.removeEventListener('keydown', onKeyDown);
+		window.removeEventListener('keyup', onKeyUp);
 
-			window.removeEventListener('focus', onFocus);
-			window.removeEventListener('blur', onBlur);
+		window.removeEventListener('focus', onFocus);
+		window.removeEventListener('blur', onBlur);
 
-			if (dropzoneElement) {
-				dropzoneElement.removeEventListener('dragover', onDragOver, true);
-				dropzoneElement.removeEventListener('drop', onDrop, true);
-				dropzoneElement.removeEventListener('dragleave', onDragLeave);
-			}
-		};
+		const dropzoneElement = document.getElementById('chat-container');
+
+		if (dropzoneElement) {
+			dropzoneElement?.removeEventListener('dragover', onDragOver);
+			dropzoneElement?.removeEventListener('drop', onDrop);
+			dropzoneElement?.removeEventListener('dragleave', onDragLeave);
+		}
 	});
 </script>
 
+<FilesOverlay show={dragged} />
 <ToolServersModal bind:show={showTools} {selectedToolIds} />
 
 <InputVariablesModal
@@ -1098,20 +952,6 @@
 	}}
 	on:close={() => {
 		integrationsMenuCloseOnOutsideClick = true;
-	}}
-/>
-
-<InputModal
-	bind:show={showInputModal}
-	bind:value={prompt}
-	bind:inputContent
-	onChange={(content) => {
-		console.log(content);
-		chatInputElement?.setContent(content?.json ?? null);
-	}}
-	onClose={async () => {
-		await tick();
-		chatInputElement?.focus();
 	}}
 />
 
@@ -1217,24 +1057,6 @@
 							on:click={() => createMessagePair(prompt)}
 						/>
 
-						<!-- Queued messages display -->
-						{#if messageQueue.length > 0}
-							<div
-								class="mb-1 mx-2 py-0.5 px-1.5 rounded-2xl bg-white dark:bg-gray-900/60 border border-gray-100 dark:border-gray-800/50 overflow-x-hidden overflow-y-auto max-h-[25vh]"
-							>
-								{#each messageQueue as queuedMessage (queuedMessage.id)}
-									<QueuedMessageItem
-										id={queuedMessage.id}
-										content={queuedMessage.prompt}
-										files={queuedMessage.files}
-										onSendNow={onQueueSendNow}
-										onEdit={onQueueEdit}
-										onDelete={onQueueDelete}
-									/>
-								{/each}
-							</div>
-						{/if}
-
 						<div
 							id="message-input-container"
 							class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border {$temporaryChatEnabled
@@ -1270,20 +1092,13 @@
 							{/if}
 
 							{#if files.length > 0}
-								<div
-									class="mx-2 mt-2.5 pb-1.5 flex items-center flex-wrap gap-2"
-									dir={$settings?.chatDirection ?? 'auto'}
-								>
+								<div class="mx-2 mt-2.5 pb-1.5 flex items-center flex-wrap gap-2">
 									{#each files as file, fileIdx}
-										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-											{@const fileUrl =
-												file.url.startsWith('data') || file.url.startsWith('http')
-													? file.url
-													: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
+										{#if file.type === 'image'}
 											<div class=" relative group">
 												<div class="relative flex items-center">
 													<Image
-														src={fileUrl}
+														src={file.url}
 														alt=""
 														imageClassName=" size-10 rounded-xl object-cover"
 													/>
@@ -1374,33 +1189,14 @@
 										: ''}"
 									id="chat-input-container"
 								>
-									{#if prompt.split('\n').length > 2}
-										<div class="fixed top-0 right-0 z-20">
-											<div class="mt-2.5 mr-3">
-												<button
-													type="button"
-													class="p-1 rounded-lg hover:bg-gray-100/50 dark:hover:bg-gray-800/50"
-													aria-label="Expand input"
-													on:click={async () => {
-														showInputModal = true;
-													}}
-												>
-													<Expand />
-												</button>
-											</div>
-										</div>
-									{/if}
-
 									{#if suggestions}
 										{#key $settings?.richTextInput ?? true}
 											{#key $settings?.showFormattingToolbar ?? false}
 												<RichTextInput
 													bind:this={chatInputElement}
 													id="chat-input"
-													editable={!showInputModal}
-													onChange={(content) => {
-														prompt = content.md;
-														inputContent = content;
+													onChange={(e) => {
+														prompt = e.md;
 														command = getCommand();
 													}}
 													json={true}
@@ -1525,7 +1321,29 @@
 
 														if (clipboardData && clipboardData.items) {
 															for (const item of clipboardData.items) {
-																if (item.type === 'text/plain') {
+																if (item.type.indexOf('image') !== -1) {
+																	const blob = item.getAsFile();
+																	const reader = new FileReader();
+
+																	reader.onload = function (e) {
+																		files = [
+																			...files,
+																			{
+																				type: 'image',
+																				url: `${e.target.result}`
+																			}
+																		];
+																	};
+
+																	reader.readAsDataURL(blob);
+																} else if (item?.kind === 'file') {
+																	const file = item.getAsFile();
+																	if (file) {
+																		const _files = [file];
+																		await inputFilesHandler(_files);
+																		e.preventDefault();
+																	}
+																} else if (item.type === 'text/plain') {
 																	if (($settings?.largeTextAsFile ?? false) && !shiftKey) {
 																		const text = clipboardData.getData('text/plain');
 
@@ -1540,14 +1358,8 @@
 																				}
 																			);
 
-																			await uploadFileHandler(file, true, { context: 'full' });
+																			await uploadFileHandler(file, true);
 																		}
-																	}
-																} else {
-																	const file = item.getAsFile();
-																	if (file) {
-																		await inputFilesHandler([file]);
-																		e.preventDefault();
 																	}
 																}
 															}
@@ -1606,7 +1418,9 @@
 												console.error('OneDrive Error:', error);
 											}
 										}}
-										{onUpload}
+										onUpload={async (e) => {
+											dispatch('upload', e);
+										}}
 										onClose={async () => {
 											await tick();
 
@@ -1685,7 +1499,7 @@
 										{#if (selectedToolIds ?? []).length > 0}
 											<Tooltip
 												content={$i18n.t('{{COUNT}} Available Tools', {
-													COUNT: (selectedToolIds ?? []).length
+													COUNT: selectedToolIds.length
 												})}
 											>
 												<button
@@ -1699,13 +1513,13 @@
 													<Wrench className="size-4" strokeWidth="1.75" />
 
 													<span class="text-sm">
-														{(selectedToolIds ?? []).length}
+														{selectedToolIds.length}
 													</span>
 												</button>
 											</Tooltip>
 										{/if}
 
-										{#each selectedFilterIds as filterId (filterId)}
+										{#each selectedFilterIds as filterId}
 											{@const filter = toggleFilters.find((f) => f.id === filterId)}
 											{#if filter}
 												<Tooltip content={filter?.name} placement="top">
@@ -1724,7 +1538,7 @@
 															<div class="size-4 items-center flex justify-center">
 																<img
 																	src={filter.icon}
-																	class="size-3.5 {filter.icon.includes('data:image/svg')
+																	class="size-3.5 {filter.icon.includes('svg')
 																		? 'dark:invert-[80%]'
 																		: ''}"
 																	style="fill: currentColor;"
@@ -1803,31 +1617,60 @@
 												</button>
 											</Tooltip>
 										{/if}
-
-										{#each pendingOAuthTools as pendingTool (pendingTool.id)}
-											<Tooltip content={$i18n.t('Click to connect')} placement="top">
-												<button
-													on:click|preventDefault={() => {
-														sessionStorage.setItem('pendingOAuthToolId', pendingTool.id);
-														const authUrl = getOAuthClientAuthorizationUrl(
-															pendingTool.serverId,
-															pendingTool.authType ?? 'mcp'
-														);
-														window.open(authUrl, '_self', 'noopener');
-													}}
-													type="button"
-													class="group px-2 py-[5px] flex gap-1.5 items-center text-xs rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden
-														text-amber-600 dark:text-amber-400 bg-amber-50 hover:bg-amber-100 dark:bg-amber-400/10 dark:hover:bg-amber-600/10 border border-amber-200/40 dark:border-amber-500/20"
-												>
-													<Wrench className="size-3.5" strokeWidth="1.75" />
-													<span class="truncate">{pendingTool.name}</span>
-												</button>
-											</Tooltip>
-										{/each}
 									</div>
 								</div>
 
-								<div class="self-end flex space-x-1 mr-1 shrink-0 gap-[0.5px]">
+								<div class="self-end flex space-x-1 mr-1 shrink-0">
+									{#if (!history?.currentId || history.messages[history.currentId]?.done == true) && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true))}
+										<!-- {$i18n.t('Record voice')} -->
+										<Tooltip content={$i18n.t('Dictate')}>
+											<button
+												id="voice-input-button"
+												class=" text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-full p-1.5 mr-0.5 self-center"
+												type="button"
+												on:click={async () => {
+													try {
+														let stream = await navigator.mediaDevices
+															.getUserMedia({ audio: true })
+															.catch(function (err) {
+																toast.error(
+																	$i18n.t(
+																		`Permission denied when accessing microphone: {{error}}`,
+																		{
+																			error: err
+																		}
+																	)
+																);
+																return null;
+															});
+
+														if (stream) {
+															recording = true;
+															const tracks = stream.getTracks();
+															tracks.forEach((track) => track.stop());
+														}
+														stream = null;
+													} catch {
+														toast.error($i18n.t('Permission denied when accessing microphone'));
+													}
+												}}
+												aria-label="Voice Input"
+											>
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													viewBox="0 0 20 20"
+													fill="currentColor"
+													class="w-5 h-5 translate-y-[0.5px]"
+												>
+													<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
+													<path
+														d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z"
+													/>
+												</svg>
+											</button>
+										</Tooltip>
+									{/if}
+
 									{#if (taskIds && taskIds.length > 0) || (history.currentId && history.messages[history.currentId]?.done != true) || generating}
 										<div class=" flex items-center">
 											<Tooltip content={$i18n.t('Stop')}>
@@ -1852,179 +1695,95 @@
 												</button>
 											</Tooltip>
 										</div>
-									{:else}
-										{#if prompt !== '' && !history?.currentId && !$selectedTerminalId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
-											<!-- {$i18n.t('Create Note')}  -->
-											<Tooltip content={$i18n.t('Create note')} className=" flex items-center">
+									{:else if prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
+										<div class=" flex items-center">
+											<!-- {$i18n.t('Call')} -->
+											<Tooltip content={$i18n.t('Voice mode')}>
 												<button
-													id="create-note-button"
-													class=" text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-full p-1.5 -mr-1 self-center"
+													class=" bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full p-1.5 self-center"
 													type="button"
-													disabled={prompt === '' && files.length === 0}
-													on:click={() => {
-														createNote();
+													on:click={async () => {
+														if (selectedModels.length > 1) {
+															toast.error($i18n.t('Select only one model to call'));
+
+															return;
+														}
+
+														if ($config.audio.stt.engine === 'web') {
+															toast.error(
+																$i18n.t('Call feature is not supported when using Web STT engine')
+															);
+
+															return;
+														}
+														// check if user has access to getUserMedia
+														try {
+															let stream = await navigator.mediaDevices.getUserMedia({
+																audio: true
+															});
+															// If the user grants the permission, proceed to show the call overlay
+
+															if (stream) {
+																const tracks = stream.getTracks();
+																tracks.forEach((track) => track.stop());
+															}
+
+															stream = null;
+
+															if ($settings.audio?.tts?.engine === 'browser-kokoro') {
+																// If the user has not initialized the TTS worker, initialize it
+																if (!$TTSWorker) {
+																	await TTSWorker.set(
+																		new KokoroWorker({
+																			dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
+																		})
+																	);
+
+																	await $TTSWorker.init();
+																}
+															}
+
+															showCallOverlay.set(true);
+															showControls.set(true);
+														} catch (err) {
+															// If the user denies the permission or an error occurs, show an error message
+															toast.error(
+																$i18n.t('Permission denied when accessing media devices')
+															);
+														}
 													}}
+													aria-label={$i18n.t('Voice mode')}
 												>
-													<Note className="size-4.5 translate-y-[0.5px]" />
+													<Voice className="size-5" strokeWidth="2.5" />
 												</button>
 											</Tooltip>
-										{/if}
-
-										{#if !history?.currentId || history.messages[history.currentId]?.done == true}
-											<!-- Terminal Server Selector -->
-											{#if ($terminalServers ?? []).length > 0 || ($settings?.terminalServers ?? []).some((s) => s.url)}
-												<TerminalMenu bind:show={showTerminalMenu} />
-											{/if}
-
-											{#if $_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true)}
-												<!-- {$i18n.t('Record voice')} -->
-												<Tooltip content={$i18n.t('Dictate')}>
-													<button
-														id="voice-input-button"
-														class=" text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-full p-1.5 self-center mr-0.5"
-														type="button"
-														on:click={async () => {
-															try {
-																let stream = await navigator.mediaDevices
-																	.getUserMedia({ audio: true })
-																	.catch(function (err) {
-																		toast.error(
-																			$i18n.t(
-																				`Permission denied when accessing microphone: {{error}}`,
-																				{
-																					error: err
-																				}
-																			)
-																		);
-																		return null;
-																	});
-
-																if (stream) {
-																	recording = true;
-																	const tracks = stream.getTracks();
-																	tracks.forEach((track) => track.stop());
-																}
-																stream = null;
-															} catch {
-																toast.error($i18n.t('Permission denied when accessing microphone'));
-															}
-														}}
-														aria-label="Voice Input"
-													>
-														<svg
-															xmlns="http://www.w3.org/2000/svg"
-															viewBox="0 0 20 20"
-															fill="currentColor"
-															class="size-5 translate-y-[0.5px]"
-														>
-															<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
-															<path
-																d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z"
-															/>
-														</svg>
-													</button>
-												</Tooltip>
-											{/if}
-										{/if}
-
-										{#if prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
-											<div class=" flex items-center">
-												<!-- {$i18n.t('Call')} -->
-												<Tooltip content={$i18n.t('Voice mode')}>
-													<button
-														class=" bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full p-1.5 self-center"
-														type="button"
-														on:click={async () => {
-															if (selectedModels.length > 1) {
-																toast.error($i18n.t('Select only one model to call'));
-
-																return;
-															}
-
-															if ($config.audio.stt.engine === 'web') {
-																toast.error(
-																	$i18n.t('Call feature is not supported when using Web STT engine')
-																);
-
-																return;
-															}
-															// check if user has access to getUserMedia
-															try {
-																let stream = await navigator.mediaDevices.getUserMedia({
-																	audio: true
-																});
-																// If the user grants the permission, proceed to show the call overlay
-
-																if (stream) {
-																	const tracks = stream.getTracks();
-																	tracks.forEach((track) => track.stop());
-																}
-
-																stream = null;
-
-																if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-																	// If the user has not initialized the TTS worker, initialize it
-																	if (!$TTSWorker) {
-																		await TTSWorker.set(
-																			new KokoroWorker({
-																				dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-																			})
-																		);
-
-																		await $TTSWorker.init();
-																	}
-																}
-
-																showCallOverlay.set(true);
-																showControls.set(true);
-															} catch (err) {
-																// If the user denies the permission or an error occurs, show an error message
-																toast.error(
-																	$i18n.t('Permission denied when accessing media devices')
-																);
-															}
-														}}
-														aria-label={$i18n.t('Voice mode')}
-													>
-														<Voice className="size-5" strokeWidth="2.5" />
-													</button>
-												</Tooltip>
-											</div>
-										{:else}
-											<div class=" flex items-center">
-												<Tooltip
-													content={uploadPending
-														? $i18n.t('Waiting for upload...')
-														: $i18n.t('Send message')}
+										</div>
+									{:else}
+										<div class=" flex items-center">
+											<Tooltip content={$i18n.t('Send message')}>
+												<button
+													id="send-message-button"
+													class="{!(prompt === '' && files.length === 0)
+														? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
+														: 'text-white bg-gray-200 dark:text-gray-900 dark:bg-gray-700 disabled'} transition rounded-full p-1.5 self-center"
+													type="submit"
+													disabled={prompt === '' && files.length === 0}
 												>
-													<button
-														id="send-message-button"
-														class="{!(prompt === '' && files.length === 0) || uploadPending
-															? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
-															: 'text-white bg-gray-200 dark:text-gray-900 dark:bg-gray-700 disabled'} transition rounded-full p-1.5 self-center"
-														type="submit"
-														disabled={(prompt === '' && files.length === 0) || uploadPending}
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														viewBox="0 0 16 16"
+														fill="currentColor"
+														class="size-5"
 													>
-														{#if uploadPending}
-															<Spinner className="size-5" />
-														{:else}
-															<svg
-																xmlns="http://www.w3.org/2000/svg"
-																viewBox="0 0 16 16"
-																fill="currentColor"
-																class="size-5"
-															>
-																<path
-																	fill-rule="evenodd"
-																	d="M8 14a.75.75 0 0 1-.75-.75V4.56L4.03 7.78a.75.75 0 0 1-1.06-1.06l4.5-4.5a.75.75 0 0 1 1.06 0l4.5 4.5a.75.75 0 0 1-1.06 1.06L8.75 4.56v8.69A.75.75 0 0 1 8 14Z"
-																	clip-rule="evenodd"
-																/>
-															</svg>
-														{/if}
-													</button>
-												</Tooltip>
-											</div>
-										{/if}
+														<path
+															fill-rule="evenodd"
+															d="M8 14a.75.75 0 0 1-.75-.75V4.56L4.03 7.78a.75.75 0 0 1-1.06-1.06l4.5-4.5a.75.75 0 0 1 1.06 0l4.5 4.5a.75.75 0 0 1-1.06 1.06L8.75 4.56v8.69A.75.75 0 0 1 8 14Z"
+															clip-rule="evenodd"
+														/>
+													</svg>
+												</button>
+											</Tooltip>
+										</div>
 									{/if}
 								</div>
 							</div>
