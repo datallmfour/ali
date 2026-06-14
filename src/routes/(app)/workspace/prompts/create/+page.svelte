@@ -1,19 +1,19 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { goto } from '$app/navigation';
+	import { prompts } from '$lib/stores';
 	import { onMount, tick, getContext } from 'svelte';
 
 	const i18n = getContext('i18n');
 
-	import { createNewPrompt } from '$lib/apis/prompts';
+	import { createNewPrompt, getPrompts } from '$lib/apis/prompts';
 	import PromptEditor from '$lib/components/workspace/Prompts/PromptEditor.svelte';
 
 	let prompt: {
-		name: string;
+		title: string;
 		command: string;
 		content: string;
-		tags: string[];
-		access_grants: any[];
+		access_control: any | null;
 	} | null = null;
 
 	let clone = false;
@@ -26,15 +26,16 @@
 
 		if (res) {
 			toast.success($i18n.t('Prompt created successfully'));
+
+			await prompts.set(await getPrompts(localStorage.token));
 			await goto('/workspace/prompts');
 		}
 	};
 
 	onMount(async () => {
 		window.addEventListener('message', async (event) => {
-			console.log(event);
 			if (
-				!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:9999'].includes(
+				!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:5173'].includes(
 					event.origin
 				)
 			)
@@ -44,11 +45,10 @@
 
 			clone = true;
 			prompt = {
-				name: _prompt.name || _prompt.title || 'Prompt',
+				title: _prompt.title,
 				command: _prompt.command,
 				content: _prompt.content,
-				tags: _prompt.tags || [],
-				access_grants: _prompt.access_grants !== undefined ? _prompt.access_grants : []
+				access_control: null
 			};
 		});
 
@@ -64,11 +64,10 @@
 
 			clone = true;
 			prompt = {
-				name: _prompt.name || _prompt.title || 'Prompt',
+				title: _prompt.title,
 				command: _prompt.command,
 				content: _prompt.content,
-				tags: _prompt.tags || [],
-				access_grants: _prompt.access_grants !== undefined ? _prompt.access_grants : []
+				access_control: null
 			};
 		}
 	});

@@ -9,18 +9,12 @@
 	import { page } from '$app/stores';
 
 	import { getBackendConfig } from '$lib/apis';
-	import {
-		ldapUserSignIn,
-		getSessionUser,
-		userSignIn,
-		userSignUp,
-		updateUserTimezone
-	} from '$lib/apis/auths';
+	import { ldapUserSignIn, getSessionUser, userSignIn, userSignUp } from '$lib/apis/auths';
 
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { WEBUI_NAME, config, user, socket } from '$lib/stores';
 
-	import { generateInitialsImage, canvasPixelTest, getUserTimezone } from '$lib/utils';
+	import { generateInitialsImage, canvasPixelTest } from '$lib/utils';
 
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import OnBoarding from '$lib/components/OnBoarding.svelte';
@@ -52,12 +46,6 @@
 			$socket.emit('user-join', { auth: { token: sessionUser.token } });
 			await user.set(sessionUser);
 			await config.set(await getBackendConfig());
-
-			// Update user timezone
-			const timezone = getUserTimezone();
-			if (sessionUser.token && timezone) {
-				updateUserTimezone(sessionUser.token, timezone);
-			}
 
 			if (!redirectPath) {
 				redirectPath = $page.url.searchParams.get('redirect') || '/';
@@ -183,31 +171,10 @@
 		await oauthCallbackHandler();
 		form = $page.url.searchParams.get('form');
 
-		// Auto-redirect to SSO when OAUTH_AUTO_REDIRECT is enabled and the
-		// deployment is unambiguously SSO-only (single provider, no login form,
-		// no LDAP). Suppressed by ?form=, ?error=, onboarding, trusted-header
-		// auth, or an existing session/token.
-		if ($config?.oauth?.auto_redirect && !form && !error) {
-			const providers = Object.keys($config?.oauth?.providers ?? {});
-			if (
-				providers.length === 1 &&
-				$config?.features?.auth !== false &&
-				$config?.features?.enable_login_form === false &&
-				!$config?.features?.enable_ldap &&
-				!$config?.features?.auth_trusted_header &&
-				!$config?.onboarding &&
-				!localStorage.token &&
-				!document.cookie.split('; ').some((c) => c.startsWith('token='))
-			) {
-				window.location.href = `${WEBUI_BASE_URL}/oauth/${providers[0]}/login`;
-				return;
-			}
-		}
-
 		loaded = true;
 		setLogoImage();
 
-		if (($config?.features?.auth_trusted_header ?? false) || $config?.features?.auth === false) {
+		if (($config?.features.auth_trusted_header ?? false) || $config?.features.auth === false) {
 			await signInHandler();
 		} else {
 			onboarding = $config?.onboarding ?? false;
@@ -264,7 +231,7 @@
 										crossorigin="anonymous"
 										src="{WEBUI_BASE_URL}/static/favicon.png"
 										class="size-24 rounded-full"
-										alt="{$WEBUI_NAME} logo"
+										alt=""
 									/>
 								</div>
 							{/if}
@@ -363,9 +330,7 @@
 												placeholder={$i18n.t('Enter Your Password')}
 												autocomplete={mode === 'signup' ? 'new-password' : 'current-password'}
 												name="password"
-												screenReader={true}
 												required
-												aria-required="true"
 											/>
 										</div>
 
@@ -461,7 +426,6 @@
 												xmlns="http://www.w3.org/2000/svg"
 												viewBox="0 0 48 48"
 												class="size-6 mr-3"
-												aria-hidden="true"
 											>
 												<path
 													fill="#EA4335"
@@ -491,7 +455,6 @@
 												xmlns="http://www.w3.org/2000/svg"
 												viewBox="0 0 21 21"
 												class="size-6 mr-3"
-												aria-hidden="true"
 											>
 												<rect x="1" y="1" width="9" height="9" fill="#f25022" /><rect
 													x="1"
@@ -522,7 +485,6 @@
 												xmlns="http://www.w3.org/2000/svg"
 												viewBox="0 0 24 24"
 												class="size-6 mr-3"
-												aria-hidden="true"
 											>
 												<path
 													fill="currentColor"
@@ -546,7 +508,6 @@
 												stroke-width="1.5"
 												stroke="currentColor"
 												class="size-6 mr-3"
-												aria-hidden="true"
 											>
 												<path
 													stroke-linecap="round"

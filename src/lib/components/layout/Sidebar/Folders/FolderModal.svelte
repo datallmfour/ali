@@ -8,7 +8,7 @@
 	import { toast } from 'svelte-sonner';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { user, config } from '$lib/stores';
+	import { user } from '$lib/stores';
 
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import Knowledge from '$lib/components/workspace/Models/Knowledge.svelte';
@@ -19,7 +19,6 @@
 	export let onSubmit: Function = (e) => {};
 
 	export let folderId = null;
-	export let parentId = null;
 	export let edit = false;
 
 	let folder = null;
@@ -43,21 +42,10 @@
 			return;
 		}
 
-		// Check folder max file count limit
-		const maxFileCount = $config?.features?.folder_max_file_count ?? '';
-		if (maxFileCount && (data?.files ?? []).length > maxFileCount) {
-			toast.error(
-				$i18n.t('Maximum number of files per folder is {{max}}.', { max: maxFileCount ?? 0 })
-			);
-			loading = false;
-			return;
-		}
-
 		await onSubmit({
 			name,
 			meta,
-			data,
-			parent_id: edit ? undefined : parentId
+			data
 		});
 		show = false;
 		loading = false;

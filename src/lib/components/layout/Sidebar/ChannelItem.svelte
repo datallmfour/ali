@@ -25,25 +25,6 @@
 	let showEditChannelModal = false;
 
 	let itemElement;
-
-	const hasPublicReadGrant = (grants: any) =>
-		Array.isArray(grants) &&
-		grants.some(
-			(grant) =>
-				grant?.principal_type === 'user' &&
-				grant?.principal_id === '*' &&
-				grant?.permission === 'read'
-		);
-
-	const isPublicChannel = (channel: any): boolean => {
-		if (channel?.type === 'group') {
-			if (typeof channel?.is_private === 'boolean') {
-				return !channel.is_private;
-			}
-			return hasPublicReadGrant(channel?.access_grants);
-		}
-		return hasPublicReadGrant(channel?.access_grants);
-	};
 </script>
 
 <ChannelModal
@@ -51,12 +32,11 @@
 	{channel}
 	edit={true}
 	{onUpdate}
-	onSubmit={async (payload: any) => {
-		const { name, is_private, access_grants, group_ids, user_ids } = payload ?? {};
+	onSubmit={async ({ name, is_private, access_control, group_ids, user_ids }) => {
 		const res = await updateChannelById(localStorage.token, channel.id, {
 			name,
 			is_private,
-			access_grants,
+			access_control,
 			group_ids,
 			user_ids
 		}).catch((error) => {
@@ -143,7 +123,7 @@
 					{/if}
 				{:else}
 					<div class=" size-4 justify-center flex items-center ml-1">
-						{#if isPublicChannel(channel)}
+						{#if channel?.type === 'group' ? !channel?.is_private : channel?.access_control === null}
 							<Hashtag className="size-3.5" strokeWidth="2.5" />
 						{:else}
 							<Lock className="size-[15px]" strokeWidth="2" />
@@ -156,11 +136,11 @@
 				class=" text-left self-center overflow-hidden w-full line-clamp-1 flex-1 pr-1 flex items-center gap-2.5"
 			>
 				{#if channel?.name}
-					<span class="line-clamp-1">
+					<span>
 						{channel.name}
 					</span>
 				{:else}
-					<span class="shrink-0 line-clamp-1">
+					<span class="shrink-0">
 						{channel?.users
 							?.filter((u) => u.id !== $user?.id)
 							.map((u) => u.name)
@@ -171,7 +151,7 @@
 						{@const dmUser = channel.users.find((u) => u.id !== $user?.id)}
 
 						{#if dmUser?.status_emoji || dmUser?.status_message}
-							<span class="flex gap-1.5 line-clamp-1">
+							<span class="flex gap-1.5">
 								{#if dmUser?.status_emoji}
 									<div class=" self-center shrink-0">
 										<Emoji className="size-3.5" shortCode={dmUser?.status_emoji} />
@@ -191,7 +171,7 @@
 		<div class="flex items-center">
 			{#if channel?.unread_count > 0}
 				<div
-					class="text-xs py-[1px] px-2 rounded-xl bg-gray-100 text-black dark:bg-gray-800 dark:text-white font-medium whitespace-nowrap"
+					class="text-xs py-[1px] px-2 rounded-xl bg-gray-100 text-black dark:bg-gray-800 dark:text-white font-medium"
 				>
 					{new Intl.NumberFormat($i18n.locale, {
 						notation: 'compact',

@@ -41,8 +41,10 @@
 					style="white-space: pre-wrap;"
 				>
 					{#if ($config?.ui?.pending_user_overlay_content ?? '').trim() !== ''}
-						{@html DOMPurify.sanitize(
-							marked.parse(($config?.ui?.pending_user_overlay_content ?? '').replace(/\n/g, '<br>'))
+						{@html marked.parse(
+							DOMPurify.sanitize(
+								($config?.ui?.pending_user_overlay_content ?? '').replace(/\n/g, '<br>')
+							)
 						)}
 					{:else}
 						{$i18n.t('Your account status is currently pending activation.')}{'\n'}{$i18n.t(

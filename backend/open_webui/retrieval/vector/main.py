@@ -1,7 +1,6 @@
+from pydantic import BaseModel
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
-
-from pydantic import BaseModel
 
 
 class VectorItem(BaseModel):
@@ -54,17 +53,15 @@ class VectorDBBase(ABC):
 
     @abstractmethod
     def search(
-        self,
-        collection_name: str,
-        vectors: List[List[Union[float, int]]],
-        filter: Optional[Dict] = None,
-        limit: int = 10,
+        self, collection_name: str, vectors: List[List[Union[float, int]]], limit: int
     ) -> Optional[SearchResult]:
         """Search for similar vectors in a collection."""
         pass
 
     @abstractmethod
-    def query(self, collection_name: str, filter: Dict, limit: Optional[int] = None) -> Optional[GetResult]:
+    def query(
+        self, collection_name: str, filter: Dict, limit: Optional[int] = None
+    ) -> Optional[GetResult]:
         """Query vectors from a collection using metadata filter."""
         pass
 

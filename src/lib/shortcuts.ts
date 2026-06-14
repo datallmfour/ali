@@ -16,8 +16,6 @@ export enum Shortcut {
 	NEW_CHAT = 'newChat',
 	NEW_TEMPORARY_CHAT = 'newTemporaryChat',
 	DELETE_CHAT = 'deleteChat',
-	OPEN_MODEL_SELECTOR = 'openModelSelector',
-	TOGGLE_DICTATION = 'toggleDictation',
 
 	//Global
 	SEARCH = 'search',
@@ -40,10 +38,7 @@ export enum Shortcut {
 	REGENERATE_RESPONSE = 'regenerateResponse',
 	COPY_LAST_CODE_BLOCK = 'copyLastCodeBlock',
 	COPY_LAST_RESPONSE = 'copyLastResponse',
-	STOP_GENERATING = 'stopGenerating',
-
-	//Voice
-	TOGGLE_MUTE = 'toggleMute'
+	STOP_GENERATING = 'stopGenerating'
 }
 
 export const shortcuts: ShortcutRegistry = {
@@ -61,16 +56,6 @@ export const shortcuts: ShortcutRegistry = {
 	[Shortcut.DELETE_CHAT]: {
 		name: 'Delete Chat',
 		keys: ['mod', 'shift', 'Backspace', 'Delete'],
-		category: 'Chat'
-	},
-	[Shortcut.OPEN_MODEL_SELECTOR]: {
-		name: 'Open Model Selector',
-		keys: ['mod', 'shift', 'M'],
-		category: 'Chat'
-	},
-	[Shortcut.TOGGLE_DICTATION]: {
-		name: 'Toggle Dictation',
-		keys: ['mod', 'shift', 'L'],
 		category: 'Chat'
 	},
 
@@ -167,13 +152,5 @@ export const shortcuts: ShortcutRegistry = {
 		name: 'Copy Last Code Block',
 		keys: ['mod', 'shift', ';'],
 		category: 'Message'
-	},
-
-	//Voice
-	[Shortcut.TOGGLE_MUTE]: {
-		name: 'Toggle Mute',
-		keys: ['M'],
-		category: 'Voice',
-		tooltip: 'Only active during Voice Mode.'
 	}
 };

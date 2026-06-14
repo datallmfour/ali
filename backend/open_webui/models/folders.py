@@ -1,26 +1,28 @@
 import logging
-import re
 import time
 import uuid
 from typing import Optional
+import re
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import JSON, BigInteger, Boolean, Column, Text, delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import BigInteger, Column, Text, JSON, Boolean, func
+
+from open_webui.internal.db import Base, get_db
+from open_webui.env import SRC_LOG_LEVELS
+
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["MODELS"])
 
 
 ####################
 # Folder DB Schema
-# Let every room in this house shelter someone who needs it,
-# and let no chamber stand empty while there is want.
 ####################
 
 
 class Folder(Base):
-    __tablename__ = 'folder'
+    __tablename__ = "folder"
     id = Column(Text, primary_key=True, unique=True)
     parent_id = Column(Text, nullable=True)
     user_id = Column(Text)
@@ -71,57 +73,51 @@ class FolderForm(BaseModel):
     name: str
     data: Optional[dict] = None
     meta: Optional[dict] = None
-    parent_id: Optional[str] = None
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="allow")
 
 
 class FolderUpdateForm(BaseModel):
     name: Optional[str] = None
     data: Optional[dict] = None
     meta: Optional[dict] = None
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="allow")
 
 
 class FolderTable:
-    async def insert_new_folder(
-        self,
-        user_id: str,
-        form_data: FolderForm,
-        parent_id: Optional[str] = None,
-        db: Optional[AsyncSession] = None,
+    def insert_new_folder(
+        self, user_id: str, form_data: FolderForm, parent_id: Optional[str] = None
     ) -> Optional[FolderModel]:
-        async with get_async_db_context(db) as db:
+        with get_db() as db:
             id = str(uuid.uuid4())
             folder = FolderModel(
                 **{
-                    'id': id,
-                    'user_id': user_id,
+                    "id": id,
+                    "user_id": user_id,
                     **(form_data.model_dump(exclude_unset=True) or {}),
-                    'parent_id': parent_id,
-                    'created_at': int(time.time()),
-                    'updated_at': int(time.time()),
+                    "parent_id": parent_id,
+                    "created_at": int(time.time()),
+                    "updated_at": int(time.time()),
                 }
             )
             try:
                 result = Folder(**folder.model_dump())
                 db.add(result)
-                await db.commit()
-                await db.refresh(result)
+                db.commit()
+                db.refresh(result)
                 if result:
                     return FolderModel.model_validate(result)
                 else:
                     return None
             except Exception as e:
-                log.exception(f'Error inserting a new folder: {e}')
+                log.exception(f"Error inserting a new folder: {e}")
                 return None
 
-    async def get_folder_by_id_and_user_id(
-        self, id: str, user_id: str, db: Optional[AsyncSession] = None
+    def get_folder_by_id_and_user_id(
+        self, id: str, user_id: str
     ) -> Optional[FolderModel]:
         try:
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Folder).filter_by(id=id, user_id=user_id))
-                folder = result.scalars().first()
+            with get_db() as db:
+                folder = db.query(Folder).filter_by(id=id, user_id=user_id).first()
 
                 if not folder:
                     return None
@@ -130,75 +126,78 @@ class FolderTable:
         except Exception:
             return None
 
-    async def get_children_folders_by_id_and_user_id(
-        self, id: str, user_id: str, db: Optional[AsyncSession] = None
+    def get_children_folders_by_id_and_user_id(
+        self, id: str, user_id: str
     ) -> Optional[list[FolderModel]]:
         try:
-            async with get_async_db_context(db) as db:
+            with get_db() as db:
                 folders = []
 
-                async def get_children(folder):
-                    children = await self.get_folders_by_parent_id_and_user_id(folder.id, user_id, db=db)
+                def get_children(folder):
+                    children = self.get_folders_by_parent_id_and_user_id(
+                        folder.id, user_id
+                    )
                     for child in children:
-                        await get_children(child)
+                        get_children(child)
                         folders.append(child)
 
-                result = await db.execute(select(Folder).filter_by(id=id, user_id=user_id))
-                folder = result.scalars().first()
+                folder = db.query(Folder).filter_by(id=id, user_id=user_id).first()
                 if not folder:
                     return None
 
-                await get_children(folder)
+                get_children(folder)
                 return folders
         except Exception:
             return None
 
-    async def get_folders_by_user_id(self, user_id: str, db: Optional[AsyncSession] = None) -> list[FolderModel]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Folder).filter_by(user_id=user_id))
-            return [FolderModel.model_validate(folder) for folder in result.scalars().all()]
+    def get_folders_by_user_id(self, user_id: str) -> list[FolderModel]:
+        with get_db() as db:
+            return [
+                FolderModel.model_validate(folder)
+                for folder in db.query(Folder).filter_by(user_id=user_id).all()
+            ]
 
-    async def get_folder_by_parent_id_and_user_id_and_name(
-        self,
-        parent_id: Optional[str],
-        user_id: str,
-        name: str,
-        db: Optional[AsyncSession] = None,
+    def get_folder_by_parent_id_and_user_id_and_name(
+        self, parent_id: Optional[str], user_id: str, name: str
     ) -> Optional[FolderModel]:
         try:
-            async with get_async_db_context(db) as db:
+            with get_db() as db:
                 # Check if folder exists
-                result = await db.execute(
-                    select(Folder).filter_by(parent_id=parent_id, user_id=user_id).filter(Folder.name.ilike(name))
+                folder = (
+                    db.query(Folder)
+                    .filter_by(parent_id=parent_id, user_id=user_id)
+                    .filter(Folder.name.ilike(name))
+                    .first()
                 )
-                folder = result.scalars().first()
 
                 if not folder:
                     return None
 
                 return FolderModel.model_validate(folder)
         except Exception as e:
-            log.error(f'get_folder_by_parent_id_and_user_id_and_name: {e}')
+            log.error(f"get_folder_by_parent_id_and_user_id_and_name: {e}")
             return None
 
-    async def get_folders_by_parent_id_and_user_id(
-        self, parent_id: Optional[str], user_id: str, db: Optional[AsyncSession] = None
+    def get_folders_by_parent_id_and_user_id(
+        self, parent_id: Optional[str], user_id: str
     ) -> list[FolderModel]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Folder).filter_by(parent_id=parent_id, user_id=user_id))
-            return [FolderModel.model_validate(folder) for folder in result.scalars().all()]
+        with get_db() as db:
+            return [
+                FolderModel.model_validate(folder)
+                for folder in db.query(Folder)
+                .filter_by(parent_id=parent_id, user_id=user_id)
+                .all()
+            ]
 
-    async def update_folder_parent_id_by_id_and_user_id(
+    def update_folder_parent_id_by_id_and_user_id(
         self,
         id: str,
         user_id: str,
         parent_id: str,
-        db: Optional[AsyncSession] = None,
     ) -> Optional[FolderModel]:
         try:
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Folder).filter_by(id=id, user_id=user_id))
-                folder = result.scalars().first()
+            with get_db() as db:
+                folder = db.query(Folder).filter_by(id=id, user_id=user_id).first()
 
                 if not folder:
                     return None
@@ -206,70 +205,65 @@ class FolderTable:
                 folder.parent_id = parent_id
                 folder.updated_at = int(time.time())
 
-                await db.commit()
+                db.commit()
 
                 return FolderModel.model_validate(folder)
         except Exception as e:
-            log.error(f'update_folder: {e}')
+            log.error(f"update_folder: {e}")
             return
 
-    async def update_folder_by_id_and_user_id(
-        self,
-        id: str,
-        user_id: str,
-        form_data: FolderUpdateForm,
-        db: Optional[AsyncSession] = None,
+    def update_folder_by_id_and_user_id(
+        self, id: str, user_id: str, form_data: FolderUpdateForm
     ) -> Optional[FolderModel]:
         try:
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Folder).filter_by(id=id, user_id=user_id))
-                folder = result.scalars().first()
+            with get_db() as db:
+                folder = db.query(Folder).filter_by(id=id, user_id=user_id).first()
 
                 if not folder:
                     return None
 
                 form_data = form_data.model_dump(exclude_unset=True)
 
-                existing_result = await db.execute(
-                    select(Folder).filter_by(
-                        name=form_data.get('name'),
+                existing_folder = (
+                    db.query(Folder)
+                    .filter_by(
+                        name=form_data.get("name"),
                         parent_id=folder.parent_id,
                         user_id=user_id,
                     )
+                    .first()
                 )
-                existing_folder = existing_result.scalars().first()
 
                 if existing_folder and existing_folder.id != id:
                     return None
 
-                folder.name = form_data.get('name', folder.name)
-                if 'data' in form_data:
+                folder.name = form_data.get("name", folder.name)
+                if "data" in form_data:
                     folder.data = {
                         **(folder.data or {}),
-                        **form_data['data'],
+                        **form_data["data"],
                     }
 
-                if 'meta' in form_data:
+                if "meta" in form_data:
                     folder.meta = {
                         **(folder.meta or {}),
-                        **form_data['meta'],
+                        **form_data["meta"],
                     }
 
                 folder.updated_at = int(time.time())
-                await db.commit()
+                db.commit()
 
                 return FolderModel.model_validate(folder)
         except Exception as e:
-            log.error(f'update_folder: {e}')
+            log.error(f"update_folder: {e}")
             return
 
-    async def update_folder_is_expanded_by_id_and_user_id(
-        self, id: str, user_id: str, is_expanded: bool, db: Optional[AsyncSession] = None
+    def update_folder_is_expanded_by_id_and_user_id(
+        self, id: str, user_id: str, is_expanded: bool
     ) -> Optional[FolderModel]:
         try:
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Folder).filter_by(id=id, user_id=user_id))
-                folder = result.scalars().first()
+            with get_db() as db:
+                folder = db.query(Folder).filter_by(id=id, user_id=user_id).first()
 
                 if not folder:
                     return None
@@ -277,53 +271,52 @@ class FolderTable:
                 folder.is_expanded = is_expanded
                 folder.updated_at = int(time.time())
 
-                await db.commit()
+                db.commit()
 
                 return FolderModel.model_validate(folder)
         except Exception as e:
-            log.error(f'update_folder: {e}')
+            log.error(f"update_folder: {e}")
             return
 
-    async def delete_folder_by_id_and_user_id(
-        self, id: str, user_id: str, db: Optional[AsyncSession] = None
-    ) -> list[str]:
+    def delete_folder_by_id_and_user_id(self, id: str, user_id: str) -> list[str]:
         try:
             folder_ids = []
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Folder).filter_by(id=id, user_id=user_id))
-                folder = result.scalars().first()
+            with get_db() as db:
+                folder = db.query(Folder).filter_by(id=id, user_id=user_id).first()
                 if not folder:
                     return folder_ids
 
                 folder_ids.append(folder.id)
 
                 # Delete all children folders
-                async def delete_children(folder):
-                    folder_children = await self.get_folders_by_parent_id_and_user_id(folder.id, user_id, db=db)
+                def delete_children(folder):
+                    folder_children = self.get_folders_by_parent_id_and_user_id(
+                        folder.id, user_id
+                    )
                     for folder_child in folder_children:
-                        await delete_children(folder_child)
+
+                        delete_children(folder_child)
                         folder_ids.append(folder_child.id)
 
-                        child_result = await db.execute(select(Folder).filter_by(id=folder_child.id))
-                        child_folder = child_result.scalars().first()
-                        await db.delete(child_folder)
-                        await db.commit()
+                        folder = db.query(Folder).filter_by(id=folder_child.id).first()
+                        db.delete(folder)
+                        db.commit()
 
-                await delete_children(folder)
-                await db.delete(folder)
-                await db.commit()
+                delete_children(folder)
+                db.delete(folder)
+                db.commit()
                 return folder_ids
         except Exception as e:
-            log.error(f'delete_folder: {e}')
+            log.error(f"delete_folder: {e}")
             return []
 
     def normalize_folder_name(self, name: str) -> str:
         # Replace _ and space with a single space, lower case, collapse multiple spaces
-        name = re.sub(r'[\s_]+', ' ', name)
+        name = re.sub(r"[\s_]+", " ", name)
         return name.strip().lower()
 
-    async def search_folders_by_names(
-        self, user_id: str, queries: list[str], db: Optional[AsyncSession] = None
+    def search_folders_by_names(
+        self, user_id: str, queries: list[str]
     ) -> list[FolderModel]:
         """
         Search for folders for a user where the name matches any of the queries, treating _ and space as equivalent, case-insensitive.
@@ -333,18 +326,18 @@ class FolderTable:
             return []
 
         results = {}
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Folder).filter_by(user_id=user_id))
-            folders = result.scalars().all()
+        with get_db() as db:
+            folders = db.query(Folder).filter_by(user_id=user_id).all()
             for folder in folders:
                 if self.normalize_folder_name(folder.name) in normalized_queries:
                     results[folder.id] = FolderModel.model_validate(folder)
 
                     # get children folders
-                    children = await self.get_children_folders_by_id_and_user_id(folder.id, user_id, db=db)
-                    if children:
-                        for child in children:
-                            results[child.id] = child
+                    children = self.get_children_folders_by_id_and_user_id(
+                        folder.id, user_id
+                    )
+                    for child in children:
+                        results[child.id] = child
 
         # Return the results as a list
         if not results:
@@ -353,17 +346,16 @@ class FolderTable:
             results = list(results.values())
             return results
 
-    async def search_folders_by_name_contains(
-        self, user_id: str, query: str, db: Optional[AsyncSession] = None
+    def search_folders_by_name_contains(
+        self, user_id: str, query: str
     ) -> list[FolderModel]:
         """
         Partial match: normalized name contains (as substring) the normalized query.
         """
         normalized_query = self.normalize_folder_name(query)
         results = []
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Folder).filter_by(user_id=user_id))
-            folders = result.scalars().all()
+        with get_db() as db:
+            folders = db.query(Folder).filter_by(user_id=user_id).all()
             for folder in folders:
                 norm_name = self.normalize_folder_name(folder.name)
                 if normalized_query in norm_name:

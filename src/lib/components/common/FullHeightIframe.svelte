@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
-	import { config } from '$lib/stores';
-	import { injectCsp } from '$lib/utils/csp';
 
 	// Props
 	export let src: string | null = null; // URL or raw HTML (auto-detected)
@@ -22,8 +20,6 @@
 	export let referrerPolicy: HTMLIFrameElement['referrerPolicy'] =
 		'strict-origin-when-cross-origin';
 	export let allowFullscreen = true;
-
-	export let payload = null; // payload to send into the iframe on request
 
 	let iframe: HTMLIFrameElement | null = null;
 	let iframeSrc: string | null = null;
@@ -146,28 +142,12 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		}
 	}
 
+	// Handle height messages from the iframe (we also verify the sender)
 	function onMessage(e: MessageEvent) {
 		if (!iframe || e.source !== iframe.contentWindow) return;
-
-		const data = e.data || {};
+		const data = e.data as { type?: string; height?: number };
 		if (data?.type === 'iframe:height' && typeof data.height === 'number') {
 			iframe.style.height = Math.max(0, data.height) + 'px';
-		}
-
-		// Pong message for testing connectivity
-		if (data?.type === 'pong') {
-			console.log('Received pong from iframe:', data);
-
-			// Optional: reply back
-			iframe.contentWindow?.postMessage({ type: 'pong:ack' }, '*');
-		}
-
-		// Send payload data if requested
-		if (data?.type === 'payload') {
-			iframe.contentWindow?.postMessage(
-				{ type: 'payload', requestId: data?.requestId ?? null, payload: payload },
-				'*'
-			);
 		}
 	}
 
@@ -194,7 +174,7 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 {#if iframeDoc}
 	<iframe
 		bind:this={iframe}
-		srcdoc={injectCsp(iframeDoc, $config?.ui?.iframe_csp ?? '')}
+		srcdoc={iframeDoc}
 		{title}
 		class={iframeClassName}
 		style={`${initialHeight ? `height:${initialHeight}px;` : ''}`}
