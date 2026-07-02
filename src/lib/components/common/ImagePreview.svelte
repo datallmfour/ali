@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onDestroy, getContext } from 'svelte';
+	import { onDestroy, onMount, getContext } from 'svelte';
+	import panzoom, { type PanZoom } from 'panzoom';
 
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import PanzoomContainer from '$lib/components/common/PanzoomContainer.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
 	export let show = false;
@@ -13,7 +13,28 @@
 
 	const i18n = getContext('i18n');
 
+	let mounted = false;
+
 	let previewElement = null;
+
+	let instance: PanZoom;
+
+	let sceneParentElement: HTMLElement;
+	let sceneElement: HTMLElement;
+
+	$: if (sceneElement) {
+		instance = panzoom(sceneElement, {
+			bounds: true,
+			boundsPadding: 0.1,
+
+			zoomSpeed: 0.065
+		});
+	}
+	const resetPanZoomViewport = () => {
+		instance.moveTo(0, 0);
+		instance.zoomAbs(0, 0, 1);
+		console.log(instance.getTransform());
+	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Escape') {
@@ -21,6 +42,10 @@
 			show = false;
 		}
 	};
+
+	onMount(() => {
+		mounted = true;
+	});
 
 	$: if (show && previewElement) {
 		document.body.appendChild(previewElement);
@@ -33,15 +58,11 @@
 	}
 
 	onDestroy(() => {
-		window.removeEventListener('keydown', handleKeyDown);
 		show = false;
 
-		if (previewElement && previewElement.parentNode === document.body) {
+		if (previewElement) {
 			document.body.removeChild(previewElement);
 		}
-		// NOTE: If multiple modals can stack in the future, direct "unset" may
-		// re-enable page scroll too early. Consider a shared body-scroll lock manager.
-		document.body.style.overflow = 'unset';
 	});
 </script>
 
@@ -160,8 +181,14 @@
 				</button>
 			</div>
 		</div>
-		<PanzoomContainer className="flex h-full max-h-full justify-center items-center z-0">
-			<img {src} {alt} class=" mx-auto h-full object-scale-down select-none" draggable="false" />
-		</PanzoomContainer>
+		<div class="flex h-full max-h-full justify-center items-center z-0">
+			<img
+				bind:this={sceneElement}
+				{src}
+				{alt}
+				class=" mx-auto h-full object-scale-down select-none"
+				draggable="false"
+			/>
+		</div>
 	</div>
 {/if}

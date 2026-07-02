@@ -10,8 +10,6 @@
 	import { fade } from 'svelte/transition';
 	import { flyAndScale } from '$lib/utils/transitions';
 	import { marked } from 'marked';
-	import SensitiveInput from './SensitiveInput.svelte';
-	import NativeSelect from './NativeSelect.svelte';
 
 	export let title = '';
 	export let message = '';
@@ -24,10 +22,6 @@
 	export let input = false;
 	export let inputPlaceholder = '';
 	export let inputValue = '';
-	export let inputType = '';
-	export let inputOptions: ({ label?: string; value: string } | string)[] = [];
-
-	let _inputValue = inputValue;
 
 	export let show = false;
 
@@ -41,19 +35,17 @@
 	let focusTrap: FocusTrap.FocusTrap | null = null;
 
 	const init = () => {
-		_inputValue = inputValue;
+		inputValue = '';
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Escape') {
 			console.log('Escape');
-			cancelHandler();
+			show = false;
 		}
 
 		if (event.key === 'Enter') {
 			console.log('Enter');
-			event.preventDefault();
-			event.stopPropagation();
 			confirmHandler();
 		}
 	};
@@ -62,12 +54,7 @@
 		show = false;
 		await tick();
 		await onConfirm();
-		dispatch('confirm', _inputValue);
-	};
-
-	const cancelHandler = () => {
-		show = false;
-		dispatch('cancel');
+		dispatch('confirm', inputValue);
 	};
 
 	onMount(() => {
@@ -94,7 +81,6 @@
 
 	onDestroy(() => {
 		show = false;
-		window.removeEventListener('keydown', handleKeyDown);
 		if (focusTrap) {
 			focusTrap.deactivate();
 		}
@@ -112,7 +98,7 @@
 		class=" fixed top-0 right-0 left-0 bottom-0 bg-black/60 w-full h-screen max-h-[100dvh] flex justify-center z-99999999 overflow-hidden overscroll-contain"
 		in:fade={{ duration: 10 }}
 		on:mousedown={() => {
-			cancelHandler();
+			show = false;
 		}}
 	>
 		<div
@@ -141,36 +127,13 @@
 						{/if}
 
 						{#if input}
-							{#if inputType === 'password'}
-								<div
-									class="w-full mt-2 rounded-lg px-4 py-2 text-sm dark:text-gray-300 dark:bg-gray-900"
-								>
-									<SensitiveInput
-										id="event-confirm-input"
-										placeholder={inputPlaceholder
-											? inputPlaceholder
-											: $i18n.t('Enter your message')}
-										bind:value={_inputValue}
-										required={true}
-									/>
-								</div>
-							{:else if inputType === 'select' && inputOptions.length}
-								<NativeSelect
-									className="w-full mt-2 rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-900 outline-hidden"
-									bind:value={_inputValue}
-									options={inputOptions}
-									placeholder={inputPlaceholder ? inputPlaceholder : $i18n.t('Select an option')}
-									required
-								/>
-							{:else}
-								<textarea
-									bind:value={_inputValue}
-									placeholder={inputPlaceholder ? inputPlaceholder : $i18n.t('Enter your message')}
-									class="w-full mt-2 rounded-lg px-4 py-2 text-sm dark:text-gray-300 dark:bg-gray-900 outline-hidden resize-none"
-									rows="3"
-									required
-								/>
-							{/if}
+							<textarea
+								bind:value={inputValue}
+								placeholder={inputPlaceholder ? inputPlaceholder : $i18n.t('Enter your message')}
+								class="w-full mt-2 rounded-lg px-4 py-2 text-sm dark:text-gray-300 dark:bg-gray-900 outline-hidden resize-none"
+								rows="3"
+								required
+							/>
 						{/if}
 					</div>
 				</slot>
@@ -179,7 +142,8 @@
 					<button
 						class="text-sm bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-white font-medium w-full py-2 rounded-3xl transition"
 						on:click={() => {
-							cancelHandler();
+							show = false;
+							dispatch('cancel');
 						}}
 						type="button"
 					>

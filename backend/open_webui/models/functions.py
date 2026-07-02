@@ -1,43 +1,43 @@
-"""Function (filter/action/pipe) models, forms, and database operations."""
-
-from __future__ import annotations
-
 import logging
 import time
+from typing import Optional
 
-# local imports
-from open_webui.internal.db import Base, JSONField, get_async_db_context
-from open_webui.models.users import UserResponse, Users
-from open_webui.utils.valves import decrypt_valves, encrypt_valves
+from open_webui.internal.db import Base, JSONField, get_db
+from open_webui.models.users import Users, UserModel
+from open_webui.env import SRC_LOG_LEVELS
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import BigInteger, Boolean, Column, Index, String, Text, delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import BigInteger, Boolean, Column, String, Text, Index
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["MODELS"])
+
+####################
+# Functions DB Schema
+####################
 
 
-class Function(Base):  # database table mapping
-    __tablename__ = 'function'
+class Function(Base):
+    __tablename__ = "function"
 
     id = Column(String, primary_key=True, unique=True)
-    user_id = Column(String, index=True)  # creator user id
-    name = Column(Text, nullable=False)  # function identifier
-    type = Column(Text, nullable=False)  # function type (pipe, filter, etc.)
-    content = Column(Text, nullable=True)  # Python source code
-    meta = Column(JSONField, nullable=True)  # function metadata
-    valves = Column(JSONField, nullable=True)  # function configuration valves
-    is_active = Column(Boolean, default=False)  # function activation status
-    is_global = Column(Boolean)  # if True, applied to every chat automatically
-    updated_at = Column(BigInteger)  # epoch seconds
-    created_at = Column(BigInteger)  # epoch seconds
+    user_id = Column(String)
+    name = Column(Text)
+    type = Column(Text)
+    content = Column(Text)
+    meta = Column(JSONField)
+    valves = Column(JSONField)
+    is_active = Column(Boolean)
+    is_global = Column(Boolean)
+    updated_at = Column(BigInteger)
+    created_at = Column(BigInteger)
 
-    __table_args__ = (Index('is_global_idx', 'is_global'),)  # speed up global-function lookups
+    __table_args__ = (Index("is_global_idx", "is_global"),)
 
 
 class FunctionMeta(BaseModel):
-    description: str | None = None
-    manifest: dict | None = {}
-    model_config = ConfigDict(extra='allow')
+    description: Optional[str] = None
+    manifest: Optional[dict] = {}
+    model_config = ConfigDict(extra="allow")
 
 
 class FunctionModel(BaseModel):
@@ -52,10 +52,9 @@ class FunctionModel(BaseModel):
     updated_at: int  # timestamp in epoch
     created_at: int  # timestamp in epoch
 
-    model_config = ConfigDict(from_attributes=True)  # allows ORM model binding
+    model_config = ConfigDict(from_attributes=True)
 
 
-# --- form / schema definitions ---
 class FunctionWithValvesModel(BaseModel):
     id: str
     user_id: str
@@ -63,7 +62,7 @@ class FunctionWithValvesModel(BaseModel):
     type: str
     content: str
     meta: FunctionMeta
-    valves: dict | None = None
+    valves: Optional[dict] = None
     is_active: bool = False
     is_global: bool = False
     updated_at: int  # timestamp in epoch
@@ -77,6 +76,10 @@ class FunctionWithValvesModel(BaseModel):
 ####################
 
 
+class FunctionUserResponse(FunctionModel):
+    user: Optional[UserModel] = None
+
+
 class FunctionResponse(BaseModel):
     id: str
     user_id: str
@@ -88,12 +91,6 @@ class FunctionResponse(BaseModel):
     updated_at: int  # timestamp in epoch
     created_at: int  # timestamp in epoch
 
-    model_config = ConfigDict(from_attributes=True)
-
-
-class FunctionUserResponse(FunctionResponse):
-    user: UserResponse | None = None
-
 
 class FunctionForm(BaseModel):
     id: str
@@ -103,54 +100,45 @@ class FunctionForm(BaseModel):
 
 
 class FunctionValves(BaseModel):
-    valves: dict | None = None
+    valves: Optional[dict] = None
 
 
 class FunctionsTable:
-    async def insert_new_function(
-        self,
-        user_id: str,
-        type: str,
-        form_data: FunctionForm,
-        db: AsyncSession | None = None,
-    ) -> FunctionModel | None:
+    def insert_new_function(
+        self, user_id: str, type: str, form_data: FunctionForm
+    ) -> Optional[FunctionModel]:
         function = FunctionModel(
             **{
                 **form_data.model_dump(),
-                'user_id': user_id,
-                'type': type,
-                'updated_at': int(time.time()),
-                'created_at': int(time.time()),
+                "user_id": user_id,
+                "type": type,
+                "updated_at": int(time.time()),
+                "created_at": int(time.time()),
             }
         )
 
         try:
-            async with get_async_db_context(db) as db:
+            with get_db() as db:
                 result = Function(**function.model_dump())
                 db.add(result)
-                await db.commit()
-                await db.refresh(result)
+                db.commit()
+                db.refresh(result)
                 if result:
                     return FunctionModel.model_validate(result)
                 else:
                     return None
         except Exception as e:
-            log.exception(f'Error creating a new function: {e}')
+            log.exception(f"Error creating a new function: {e}")
             return None
 
-    async def sync_functions(
-        self,
-        user_id: str,
-        functions: list[FunctionWithValvesModel],
-        db: AsyncSession | None = None,
+    def sync_functions(
+        self, user_id: str, functions: list[FunctionWithValvesModel]
     ) -> list[FunctionWithValvesModel]:
-        # Synchronize functions by updating existing ones, inserting new ones,
-        # and removing those that are no longer present.
+        # Synchronize functions for a user by updating existing ones, inserting new ones, and removing those that are no longer present.
         try:
-            async with get_async_db_context(db) as db:
+            with get_db() as db:
                 # Get existing functions
-                result = await db.execute(select(Function))
-                existing_functions = result.scalars().all()
+                existing_functions = db.query(Function).all()
                 existing_ids = {func.id for func in existing_functions}
 
                 # Prepare a set of new function IDs
@@ -158,100 +146,81 @@ class FunctionsTable:
 
                 # Update or insert functions
                 for func in functions:
-                    func_data = func.model_dump()
-                    func_data['valves'] = encrypt_valves(func_data['valves']) if func_data.get('valves') else None
-                    func_data['user_id'] = user_id
-                    func_data['updated_at'] = int(time.time())
-
                     if func.id in existing_ids:
-                        await db.execute(update(Function).filter_by(id=func.id).values(**func_data))
+                        db.query(Function).filter_by(id=func.id).update(
+                            {
+                                **func.model_dump(),
+                                "user_id": user_id,
+                                "updated_at": int(time.time()),
+                            }
+                        )
                     else:
-                        new_func = Function(**func_data)
+                        new_func = Function(
+                            **{
+                                **func.model_dump(),
+                                "user_id": user_id,
+                                "updated_at": int(time.time()),
+                            }
+                        )
                         db.add(new_func)
 
                 # Remove functions that are no longer present
                 for func in existing_functions:
                     if func.id not in new_function_ids:
-                        await db.delete(func)
+                        db.delete(func)
 
-                await db.commit()
+                db.commit()
 
-                result = await db.execute(select(Function))
-                return [FunctionModel.model_validate(func) for func in result.scalars().all()]
+                return [
+                    FunctionModel.model_validate(func)
+                    for func in db.query(Function).all()
+                ]
         except Exception as e:
-            log.exception(f'Error syncing functions for user {user_id}: {e}')
+            log.exception(f"Error syncing functions for user {user_id}: {e}")
             return []
 
-    async def get_function_by_id(self, id: str, db: AsyncSession | None = None) -> FunctionModel | None:
+    def get_function_by_id(self, id: str) -> Optional[FunctionModel]:
         try:
-            async with get_async_db_context(db) as db:
-                function = await db.get(Function, id)
-                return FunctionModel.model_validate(function) if function else None
+            with get_db() as db:
+                function = db.get(Function, id)
+                return FunctionModel.model_validate(function)
         except Exception:
             return None
 
-    async def get_functions_by_ids(self, ids: list[str], db: AsyncSession | None = None) -> list[FunctionModel]:
-        """
-        Batch fetch multiple functions by their IDs in a single query.
-        Returns functions in the same order as the input IDs (None entries filtered out).
-        """
-        if not ids:
-            return []
-        try:
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Function).filter(Function.id.in_(ids)))
-                functions = result.scalars().all()
-                # Create a dict for O(1) lookup
-                func_dict = {f.id: FunctionModel.model_validate(f) for f in functions}
-                # Return in original order, filtering out any not found
-                return [func_dict[id] for id in ids if id in func_dict]
-        except Exception:
-            return []
-
-    async def get_functions(
-        self, active_only=False, include_valves=False, db: AsyncSession | None = None
+    def get_functions(
+        self, active_only=False, include_valves=False
     ) -> list[FunctionModel | FunctionWithValvesModel]:
-        async with get_async_db_context(db) as db:
+        with get_db() as db:
             if active_only:
-                result = await db.execute(select(Function).filter_by(is_active=True))
-            else:
-                result = await db.execute(select(Function))
+                functions = db.query(Function).filter_by(is_active=True).all()
 
-            functions = result.scalars().all()
+            else:
+                functions = db.query(Function).all()
 
             if include_valves:
                 return [
-                    FunctionWithValvesModel.model_validate(
-                        {
-                            **FunctionModel.model_validate(function).model_dump(),
-                            'valves': decrypt_valves(function.valves),
-                        }
-                    )
+                    FunctionWithValvesModel.model_validate(function)
                     for function in functions
                 ]
             else:
-                return [FunctionModel.model_validate(function) for function in functions]
+                return [
+                    FunctionModel.model_validate(function) for function in functions
+                ]
 
-    async def get_function_list(self, db: AsyncSession | None = None) -> list[FunctionUserResponse]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Function).order_by(Function.updated_at.desc()))
-            functions = result.scalars().all()
+    def get_function_list(self) -> list[FunctionUserResponse]:
+        with get_db() as db:
+            functions = db.query(Function).order_by(Function.updated_at.desc()).all()
             user_ids = list(set(func.user_id for func in functions))
 
-            users = await Users.get_users_by_user_ids(user_ids, db=db) if user_ids else []
+            users = Users.get_users_by_user_ids(user_ids) if user_ids else []
             users_dict = {user.id: user for user in users}
 
             return [
                 FunctionUserResponse.model_validate(
                     {
-                        **FunctionResponse.model_validate(func).model_dump(),
-                        'user': (
-                            UserResponse(
-                                id=users_dict[func.user_id].id,
-                                name=users_dict[func.user_id].name,
-                                role=users_dict[func.user_id].role,
-                                email=users_dict[func.user_id].email,
-                            ).model_dump()
+                        **FunctionModel.model_validate(func).model_dump(),
+                        "user": (
+                            users_dict.get(func.user_id).model_dump()
                             if func.user_id in users_dict
                             else None
                         ),
@@ -260,72 +229,70 @@ class FunctionsTable:
                 for func in functions
             ]
 
-    async def get_functions_by_type(
-        self, type: str, active_only=False, db: AsyncSession | None = None
+    def get_functions_by_type(
+        self, type: str, active_only=False
     ) -> list[FunctionModel]:
-        async with get_async_db_context(db) as db:
+        with get_db() as db:
             if active_only:
-                result = await db.execute(select(Function).filter_by(type=type, is_active=True))
+                return [
+                    FunctionModel.model_validate(function)
+                    for function in db.query(Function)
+                    .filter_by(type=type, is_active=True)
+                    .all()
+                ]
             else:
-                result = await db.execute(select(Function).filter_by(type=type))
-            return [FunctionModel.model_validate(function) for function in result.scalars().all()]
+                return [
+                    FunctionModel.model_validate(function)
+                    for function in db.query(Function).filter_by(type=type).all()
+                ]
 
-    async def get_global_filter_functions(self, db: AsyncSession | None = None) -> list[FunctionModel]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Function).filter_by(type='filter', is_active=True, is_global=True))
-            return [FunctionModel.model_validate(function) for function in result.scalars().all()]
+    def get_global_filter_functions(self) -> list[FunctionModel]:
+        with get_db() as db:
+            return [
+                FunctionModel.model_validate(function)
+                for function in db.query(Function)
+                .filter_by(type="filter", is_active=True, is_global=True)
+                .all()
+            ]
 
-    async def get_global_action_functions(self, db: AsyncSession | None = None) -> list[FunctionModel]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Function).filter_by(type='action', is_active=True, is_global=True))
-            return [FunctionModel.model_validate(function) for function in result.scalars().all()]
+    def get_global_action_functions(self) -> list[FunctionModel]:
+        with get_db() as db:
+            return [
+                FunctionModel.model_validate(function)
+                for function in db.query(Function)
+                .filter_by(type="action", is_active=True, is_global=True)
+                .all()
+            ]
 
-    async def get_function_valves_by_id(self, id: str, db: AsyncSession | None = None) -> dict | None:
-        async with get_async_db_context(db) as db:
+    def get_function_valves_by_id(self, id: str) -> Optional[dict]:
+        with get_db() as db:
             try:
-                function = await db.get(Function, id)
-                return decrypt_valves(function.valves if function else None)
+                function = db.get(Function, id)
+                return function.valves if function.valves else {}
             except Exception as e:
-                log.exception(f'Error getting function valves by id {id}: {e}')
+                log.exception(f"Error getting function valves by id {id}: {e}")
                 return None
 
-    async def get_function_valves_by_ids(self, ids: list[str], db: AsyncSession | None = None) -> dict[str, dict]:
-        """
-        Batch fetch valves for multiple functions in a single query.
-        Returns a dict mapping function_id -> valves dict.
-        Functions without valves are mapped to {}.
-        """
-        if not ids:
-            return {}
-        try:
-            async with get_async_db_context(db) as db:
-                result = await db.execute(select(Function.id, Function.valves).filter(Function.id.in_(ids)))
-                functions = result.all()
-                return {f.id: decrypt_valves(f.valves) for f in functions}
-        except Exception as e:
-            log.exception(f'Error batch-fetching function valves: {e}')
-            return {}
-
-    async def update_function_valves_by_id(
-        self, id: str, valves: dict, db: AsyncSession | None = None
-    ) -> FunctionValves | None:
-        async with get_async_db_context(db) as db:
+    def update_function_valves_by_id(
+        self, id: str, valves: dict
+    ) -> Optional[FunctionValves]:
+        with get_db() as db:
             try:
-                function = await db.get(Function, id)
-                function.valves = encrypt_valves(valves)
+                function = db.get(Function, id)
+                function.valves = valves
                 function.updated_at = int(time.time())
-                await db.commit()
-                await db.refresh(function)
-                return FunctionModel.model_validate(function)
+                db.commit()
+                db.refresh(function)
+                return self.get_function_by_id(id)
             except Exception:
                 return None
 
-    async def update_function_metadata_by_id(
-        self, id: str, metadata: dict, db: AsyncSession | None = None
-    ) -> FunctionModel | None:
-        async with get_async_db_context(db) as db:
+    def update_function_metadata_by_id(
+        self, id: str, metadata: dict
+    ) -> Optional[FunctionModel]:
+        with get_db() as db:
             try:
-                function = await db.get(Function, id)
+                function = db.get(Function, id)
 
                 if function:
                     if function.meta:
@@ -334,98 +301,95 @@ class FunctionsTable:
                         function.meta = metadata
 
                     function.updated_at = int(time.time())
-                    await db.commit()
-                    await db.refresh(function)
-                    return FunctionModel.model_validate(function)
+                    db.commit()
+                    db.refresh(function)
+                    return self.get_function_by_id(id)
                 else:
                     return None
             except Exception as e:
-                log.exception(f'Error updating function metadata by id {id}: {e}')
+                log.exception(f"Error updating function metadata by id {id}: {e}")
                 return None
 
-    async def get_user_valves_by_id_and_user_id(
-        self, id: str, user_id: str, db: AsyncSession | None = None
-    ) -> dict | None:
+    def get_user_valves_by_id_and_user_id(
+        self, id: str, user_id: str
+    ) -> Optional[dict]:
         try:
-            user = await Users.get_user_by_id(user_id, db=db)
+            user = Users.get_user_by_id(user_id)
             user_settings = user.settings.model_dump() if user.settings else {}
 
             # Check if user has "functions" and "valves" settings
-            if 'functions' not in user_settings:
-                user_settings['functions'] = {}
-            if 'valves' not in user_settings['functions']:
-                user_settings['functions']['valves'] = {}
+            if "functions" not in user_settings:
+                user_settings["functions"] = {}
+            if "valves" not in user_settings["functions"]:
+                user_settings["functions"]["valves"] = {}
 
-            return decrypt_valves(user_settings['functions']['valves'].get(id))
-        except Exception:
-            log.exception(f'Error getting user values by id {id} and user id {user_id}')
+            return user_settings["functions"]["valves"].get(id, {})
+        except Exception as e:
+            log.exception(f"Error getting user values by id {id} and user id {user_id}")
             return None
 
-    async def update_user_valves_by_id_and_user_id(
-        self, id: str, user_id: str, valves: dict, db: AsyncSession | None = None
-    ) -> dict | None:
+    def update_user_valves_by_id_and_user_id(
+        self, id: str, user_id: str, valves: dict
+    ) -> Optional[dict]:
         try:
-            user = await Users.get_user_by_id(user_id, db=db)
+            user = Users.get_user_by_id(user_id)
             user_settings = user.settings.model_dump() if user.settings else {}
 
             # Check if user has "functions" and "valves" settings
-            if 'functions' not in user_settings:
-                user_settings['functions'] = {}
-            if 'valves' not in user_settings['functions']:
-                user_settings['functions']['valves'] = {}
+            if "functions" not in user_settings:
+                user_settings["functions"] = {}
+            if "valves" not in user_settings["functions"]:
+                user_settings["functions"]["valves"] = {}
 
-            user_settings['functions']['valves'][id] = encrypt_valves(valves)
+            user_settings["functions"]["valves"][id] = valves
 
             # Update the user settings in the database
-            await Users.update_user_by_id(user_id, {'settings': user_settings}, db=db)
+            Users.update_user_by_id(user_id, {"settings": user_settings})
 
-            return valves
+            return user_settings["functions"]["valves"][id]
         except Exception as e:
-            log.exception(f'Error updating user valves by id {id} and user_id {user_id}: {e}')
+            log.exception(
+                f"Error updating user valves by id {id} and user_id {user_id}: {e}"
+            )
             return None
 
-    async def update_function_by_id(
-        self, id: str, updated: dict, db: AsyncSession | None = None
-    ) -> FunctionModel | None:
-        async with get_async_db_context(db) as db:
+    def update_function_by_id(self, id: str, updated: dict) -> Optional[FunctionModel]:
+        with get_db() as db:
             try:
-                await db.execute(
-                    update(Function)
-                    .filter_by(id=id)
-                    .values(
+                db.query(Function).filter_by(id=id).update(
+                    {
                         **updated,
-                        updated_at=int(time.time()),
-                    )
+                        "updated_at": int(time.time()),
+                    }
                 )
-                await db.commit()
-                function = await db.get(Function, id)
-                return FunctionModel.model_validate(function) if function else None
+                db.commit()
+                return self.get_function_by_id(id)
             except Exception:
                 return None
 
-    async def deactivate_all_functions(self, db: AsyncSession | None = None) -> bool | None:
-        async with get_async_db_context(db) as db:
+    def deactivate_all_functions(self) -> Optional[bool]:
+        with get_db() as db:
             try:
-                await db.execute(
-                    update(Function).values(
-                        is_active=False,
-                        updated_at=int(time.time()),
-                    )
+                db.query(Function).update(
+                    {
+                        "is_active": False,
+                        "updated_at": int(time.time()),
+                    }
                 )
-                await db.commit()
+                db.commit()
                 return True
             except Exception:
                 return None
 
-    async def delete_function_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
-        async with get_async_db_context(db) as db:
+    def delete_function_by_id(self, id: str) -> bool:
+        with get_db() as db:
             try:
-                await db.execute(delete(Function).filter_by(id=id))
-                await db.commit()
+                db.query(Function).filter_by(id=id).delete()
+                db.commit()
 
                 return True
             except Exception:
                 return False
 
 
-Functions = FunctionsTable()  # singleton functions engine
+Functions = FunctionsTable()

@@ -17,37 +17,24 @@
 
 	export let onSave = (e) => {};
 
-	let loading = true;
+	let loading = false;
 	let variableValues = {};
 
 	const submitHandler = async () => {
-		// Normalize Windows CRLF (\r\n) to LF (\n) for all string values
-		// Build a new object to avoid mutating the reactive variableValues proxy
-		const result = {};
-		for (const key of Object.keys(variableValues)) {
-			if (typeof variableValues[key] === 'string') {
-				result[key] = variableValues[key].replace(/\r\n/g, '\n');
-			} else {
-				result[key] = variableValues[key];
-			}
-		}
-		onSave(result);
+		onSave(variableValues);
 		show = false;
 	};
 
 	const init = async () => {
 		loading = true;
-		const newValues = {};
-		const keys = Object.keys(variables ?? {});
-		for (const key of keys) {
-			const variable = variables[key];
-			if (variable?.default !== undefined) {
-				newValues[key] = variable.default;
+		variableValues = {};
+		for (const variable of Object.keys(variables)) {
+			if (variables[variable]?.default !== undefined) {
+				variableValues[variable] = variables[variable].default;
 			} else {
-				newValues[key] = '';
+				variableValues[variable] = '';
 			}
 		}
-		variableValues = newValues;
 		loading = false;
 
 		await tick();
@@ -106,17 +93,20 @@
 										<div class="flex mt-0.5 mb-0.5 space-x-2">
 											<div class=" flex-1">
 												{#if variables[variable]?.type === 'select'}
+													{@const options = variableAttributes?.options ?? []}
+													{@const placeholder = variableAttributes?.placeholder ?? ''}
+
 													<select
 														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
 														bind:value={variableValues[variable]}
 														id="input-variable-{idx}"
 													>
-														{#if variables[variable]?.placeholder}
+														{#if placeholder}
 															<option value="" disabled selected>
-																{variables[variable].placeholder}
+																{placeholder}
 															</option>
 														{/if}
-														{#each variables[variable]?.options ?? [] as option}
+														{#each options as option}
 															<option value={option} selected={option === variableValues[variable]}>
 																{option}
 															</option>

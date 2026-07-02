@@ -26,25 +26,6 @@
 	let showChannelPinnedMessagesModal = false;
 	let showChannelInfoModal = false;
 
-	const hasPublicReadGrant = (grants: any) =>
-		Array.isArray(grants) &&
-		grants.some(
-			(grant) =>
-				grant?.principal_type === 'user' &&
-				grant?.principal_id === '*' &&
-				grant?.permission === 'read'
-		);
-
-	const isPublicChannel = (channel: any): boolean => {
-		if (channel?.type === 'group') {
-			if (typeof channel?.is_private === 'boolean') {
-				return !channel.is_private;
-			}
-			return hasPublicReadGrant(channel?.access_grants);
-		}
-		return hasPublicReadGrant(channel?.access_grants);
-	};
-
 	export let channel;
 
 	export let onPin = (messageId, pinned) => {};
@@ -131,7 +112,7 @@
 							{/if}
 						{:else}
 							<div class=" size-4.5 justify-center flex items-center">
-								{#if isPublicChannel(channel)}
+								{#if channel?.type === 'group' ? !channel?.is_private : channel?.access_control === null}
 									<Hashtag className="size-3.5" strokeWidth="2.5" />
 								{:else}
 									<Lock className="size-5" strokeWidth="2" />
@@ -153,9 +134,7 @@
 				{/if}
 			</div>
 
-			<div
-				class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400 gap-1 shrink-0"
-			>
+			<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400 gap-1">
 				{#if channel}
 					<Tooltip content={$i18n.t('Pinned Messages')}>
 						<button
@@ -166,7 +145,7 @@
 								showChannelPinnedMessagesModal = true;
 							}}
 						>
-							<div class=" flex items-center gap-0.5 m-auto self-center shrink-0">
+							<div class=" flex items-center gap-0.5 m-auto self-center">
 								<Pin className=" size-4" strokeWidth="1.5" />
 							</div>
 						</button>
@@ -175,17 +154,17 @@
 					{#if channel?.user_count !== undefined}
 						<Tooltip content={$i18n.t('Users')}>
 							<button
-								class=" flex cursor-pointer shrink-0 py-1 px-1.5 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								class=" flex cursor-pointer py-1 px-1.5 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 								aria-label="User Count"
 								type="button"
 								on:click={() => {
 									showChannelInfoModal = true;
 								}}
 							>
-								<div class=" flex items-center gap-0.5 m-auto self-center shrink-0">
+								<div class=" flex items-center gap-0.5 m-auto self-center">
 									<UserAlt className=" size-4" strokeWidth="1.5" />
 
-									<div class="text-sm shrink-0">
+									<div class="text-sm">
 										{channel.user_count}
 									</div>
 								</div>
@@ -195,32 +174,30 @@
 				{/if}
 
 				{#if $user !== undefined}
-					<div>
-						<UserMenu
-							className="w-[240px]"
-							role={$user?.role}
-							help={true}
-							on:show={(e) => {
-								if (e.detail === 'archived-chat') {
-									showArchivedChats.set(true);
-								}
-							}}
+					<UserMenu
+						className="max-w-[240px]"
+						role={$user?.role}
+						help={true}
+						on:show={(e) => {
+							if (e.detail === 'archived-chat') {
+								showArchivedChats.set(true);
+							}
+						}}
+					>
+						<button
+							class="select-none flex rounded-xl p-1.5 w-full hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+							aria-label="User Menu"
 						>
-							<button
-								class="select-none flex rounded-xl p-1.5 w-full hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-								aria-label="User Menu"
-							>
-								<div class=" self-center">
-									<img
-										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
-										class="size-6 object-cover rounded-full"
-										alt="User profile"
-										draggable="false"
-									/>
-								</div>
-							</button>
-						</UserMenu>
-					</div>
+							<div class=" self-center">
+								<img
+									src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+									class="size-6 object-cover rounded-full"
+									alt="User profile"
+									draggable="false"
+								/>
+							</div>
+						</button>
+					</UserMenu>
 				{/if}
 			</div>
 		</div>

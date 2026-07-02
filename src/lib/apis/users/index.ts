@@ -85,33 +85,6 @@ export const updateUserDefaultPermissions = async (token: string, permissions: o
 	return res;
 };
 
-export const getUserDefaultPermissionsDefaults = async (token: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/users/default/permissions/defaults`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
 export const updateUserRole = async (token: string, id: string, role: string) => {
 	let error = null;
 
@@ -327,10 +300,10 @@ export const updateUserSettings = async (token: string, settings: object) => {
 	return res;
 };
 
-export const getUserInfoById = async (token: string, userId: string) => {
+export const getUserById = async (token: string, userId: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/info`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',
@@ -555,33 +528,6 @@ export const getUserGroupsById = async (token: string, userId: string) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/groups`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const getUserPreview = async (token: string, userId: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/preview`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',

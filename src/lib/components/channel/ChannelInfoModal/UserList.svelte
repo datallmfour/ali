@@ -1,4 +1,4 @@
-<script lang="ts">
+<script>
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { WEBUI_NAME, config, user as _user, showSidebar } from '$lib/stores';
 	import { goto } from '$app/navigation';
@@ -15,6 +15,7 @@
 
 	import Pagination from '$lib/components/common/Pagination.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+
 	import Badge from '$lib/components/common/Badge.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -37,8 +38,6 @@
 	let total = null;
 
 	let query = '';
-	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
 	let orderBy = 'name'; // default sort key
 	let direction = 'asc'; // default sort order
 
@@ -78,17 +77,13 @@
 		}
 	};
 
-	const handleSearchInput = () => {
-		if (channel === null) return;
-
-		clearTimeout(debounceTimer);
-		debounceTimer = setTimeout(() => {
-			getUserList();
-		}, 300);
-	};
-
-	// Immediate response to page/sort changes
-	$: if (channel !== null && page && orderBy && direction) {
+	$: if (
+		channel !== null &&
+		page !== null &&
+		query !== null &&
+		orderBy !== null &&
+		direction !== null
+	) {
 		getUserList();
 	}
 </script>
@@ -111,7 +106,7 @@
 				<div class="">
 					<button
 						type="button"
-						class=" px-3 py-1.5 gap-1 rounded-xl bg-gray-100/50 dark:text-white dark:bg-gray-850/50 text-black transition font-medium text-xs flex items-center justify-center"
+						class=" px-3 py-1.5 gap-1 rounded-xl bg-black dark:text-white dark:bg-gray-850/50 text-black transition font-medium text-xs flex items-center justify-center"
 						on:click={onAdd}
 					>
 						<Plus className="size-3.5 " />
@@ -143,7 +138,6 @@
 						<input
 							class=" w-full text-sm pr-4 py-1 rounded-r-xl outline-hidden bg-transparent"
 							bind:value={query}
-							on:input={handleSearchInput}
 							placeholder={$i18n.t('Search')}
 						/>
 					</div>

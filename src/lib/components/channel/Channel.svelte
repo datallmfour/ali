@@ -76,27 +76,6 @@
 		);
 	};
 
-	const pinHandler = (
-		messageId: string,
-		pinned: boolean,
-		pinnedBy: string | null = pinned ? ($user?.id ?? null) : null,
-		pinnedAt: number | null = pinned ? Date.now() * 1000000 : null
-	) => {
-		if (messages) {
-			messages = messages.map((message) => {
-				if (message.id === messageId) {
-					return {
-						...message,
-						is_pinned: pinned,
-						pinned_by: pinnedBy,
-						pinned_at: pinnedAt
-					};
-				}
-				return message;
-			});
-		}
-	};
-
 	const initHandler = async () => {
 		if (currentId) {
 			updateLastReadAt(currentId);
@@ -141,10 +120,7 @@
 			if (type === 'message') {
 				if ((data?.parent_id ?? null) === null) {
 					const tempId = data?.temp_id ?? null;
-					messages = [
-						{ ...data, temp_id: null },
-						...messages.filter((m) => !tempId || m?.temp_id !== tempId)
-					];
+					messages = [{ ...data, temp_id: null }, ...messages.filter((m) => m?.temp_id !== tempId)];
 
 					if (typingUsers.find((user) => user.id === event.user.id)) {
 						typingUsers = typingUsers.filter((user) => user.id !== event.user.id);
@@ -163,10 +139,6 @@
 				}
 			} else if (type === 'message:delete') {
 				messages = messages.filter((message) => message.id !== data.id);
-
-				if (threadId === data.id) {
-					threadId = null;
-				}
 			} else if (type === 'message:reply') {
 				const idx = messages.findIndex((message) => message.id === data.id);
 
@@ -318,7 +290,7 @@
 
 <div
 	class="h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
-		? 'md:max-w-[calc(100%-var(--sidebar-width))]'
+		? 'md:max-w-[calc(100%-260px)]'
 		: ''} w-full max-w-full flex flex-col"
 	id="channel-container"
 >
@@ -326,7 +298,17 @@
 		<Pane defaultSize={50} minSize={50} class="h-full flex flex-col w-full relative">
 			<Navbar
 				{channel}
-				onPin={pinHandler}
+				onPin={(messageId, pinned) => {
+					messages = messages.map((message) => {
+						if (message.id === messageId) {
+							return {
+								...message,
+								is_pinned: pinned
+							};
+						}
+						return message;
+					});
+				}}
 				onUpdate={async () => {
 					channel = await getChannelById(localStorage.token, id).catch((error) => {
 						return null;
@@ -358,7 +340,6 @@
 								onThread={(id) => {
 									threadId = id;
 								}}
-								onPin={pinHandler}
 								onLoad={async () => {
 									const newMessages = await getChannelMessages(
 										localStorage.token,
@@ -384,7 +365,6 @@
 						bind:chatInputElement
 						bind:replyToMessage
 						{typingUsers}
-						{channel}
 						userSuggestions={true}
 						channelSuggestions={true}
 						disabled={!channel?.write_access}
@@ -418,7 +398,6 @@
 						<Thread
 							{threadId}
 							{channel}
-							onPin={pinHandler}
 							onClose={() => {
 								threadId = null;
 							}}
@@ -441,7 +420,6 @@
 					<Thread
 						{threadId}
 						{channel}
-						onPin={pinHandler}
 						onClose={() => {
 							threadId = null;
 						}}

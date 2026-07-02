@@ -49,7 +49,7 @@
 	role="listitem"
 	class="flex flex-col justify-between px-5 mb-3 w-full {($settings?.widescreenMode ?? null)
 		? 'max-w-full'
-		: 'max-w-5xl'} mx-auto rounded-lg group message-listitem"
+		: 'max-w-5xl'} mx-auto rounded-lg group"
 >
 	{#if history.messages[messageId]}
 		{#if history.messages[messageId].role === 'user'}
@@ -100,41 +100,29 @@
 				{topPadding}
 			/>
 		{:else}
-			{#key messageId}
-				<MultiResponseMessages
-					bind:history
-					{chatId}
-					{messageId}
-					{selectedModels}
-					isLastMessage={messageId === history?.currentId}
-					{setInputText}
-					{updateChat}
-					{editMessage}
-					{saveMessage}
-					{rateMessage}
-					{actionMessage}
-					{submitMessage}
-					{deleteMessage}
-					{continueResponse}
-					{regenerateResponse}
-					{mergeResponses}
-					{triggerScroll}
-					{addMessages}
-					{readOnly}
-					{editCodeBlock}
-					{topPadding}
-				/>
-			{/key}
+			<MultiResponseMessages
+				bind:history
+				{chatId}
+				{messageId}
+				{selectedModels}
+				isLastMessage={messageId === history?.currentId}
+				{setInputText}
+				{updateChat}
+				{editMessage}
+				{saveMessage}
+				{rateMessage}
+				{actionMessage}
+				{submitMessage}
+				{deleteMessage}
+				{continueResponse}
+				{regenerateResponse}
+				{mergeResponses}
+				{triggerScroll}
+				{addMessages}
+				{readOnly}
+				{editCodeBlock}
+				{topPadding}
+			/>
 		{/if}
 	{/if}
 </div>
-
-<style>
-	/* Browser-native virtualization: skip rendering of off-screen messages
-	   without destroying their component trees. Replaces the JS-based
-	   culling that caused catastrophic mount/destroy thrashing. */
-	.message-listitem {
-		content-visibility: auto;
-		contain-intrinsic-size: auto 150px;
-	}
-</style>
