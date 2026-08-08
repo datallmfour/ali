@@ -3,6 +3,7 @@
 	import { Pane, PaneResizer } from 'paneforge';
 
 	import Drawer from '../common/Drawer.svelte';
+	import EllipsisVertical from '../icons/EllipsisVertical.svelte';
 
 	export let show = false;
 	export let pane = null;
@@ -34,13 +35,14 @@
 		const container = document.getElementById(containerId);
 
 		// initialize the minSize based on the container width
-		minSize = Math.floor((350 / container.clientWidth) * 100);
+		minSize = Math.floor((400 / container.clientWidth) * 100);
 
 		// Create a new ResizeObserver instance
 		const resizeObserver = new ResizeObserver((entries) => {
 			for (let entry of entries) {
 				const width = entry.contentRect.width;
-				const percentage = (350 / width) * 100;
+				// calculate the percentage of 200px
+				const percentage = (400 / width) * 100;
 				// set the minSize to the percentage, must be an integer
 				minSize = Math.floor(percentage);
 
@@ -69,7 +71,7 @@
 				show = false;
 			}}
 		>
-			<div class=" h-screen max-h-dvh flex flex-col">
+			<div class=" px-3.5 py-2.5 h-screen max-h-dvh flex flex-col">
 				<slot />
 			</div>
 		</Drawer>
@@ -97,7 +99,7 @@
 		{#if show}
 			<div class="flex max-h-full min-h-full">
 				<div
-					class="w-full bg-white dark:bg-gray-900 z-40 pointer-events-auto overflow-hidden scrollbar-hidden flex flex-col"
+					class="w-full pt-2 bg-white dark:shadow-lg dark:bg-gray-850 z-40 pointer-events-auto overflow-y-auto scrollbar-hidden flex flex-col px-2"
 				>
 					<slot />
 				</div>

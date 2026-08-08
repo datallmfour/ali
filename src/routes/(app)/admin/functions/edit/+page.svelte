@@ -60,11 +60,6 @@
 	};
 
 	onMount(async () => {
-		if (!$config?.features?.enable_plugins) {
-			goto('/admin', { replaceState: true });
-			return;
-		}
-
 		console.log('mounted');
 		const id = $page.url.searchParams.get('id');
 
@@ -81,7 +76,7 @@
 </script>
 
 {#if func}
-	<div class="px-[16px] h-full min-w-0 overflow-x-hidden">
+	<div class="px-[16px] h-full">
 		<FunctionEditor
 			edit={true}
 			id={func.id}

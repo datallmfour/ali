@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { DropdownMenu } from 'bits-ui';
+	import { flyAndScale } from '$lib/utils/transitions';
 	import { getContext, onMount, tick } from 'svelte';
 
 	import { config, user, tools as _tools, mobile } from '$lib/stores';
 	import { getTools } from '$lib/apis/tools';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
-	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import DocumentArrowUpSolid from '$lib/components/icons/DocumentArrowUpSolid.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -44,30 +45,33 @@
 	</Tooltip>
 
 	<div slot="content">
-		<DropdownMenu className="w-[200px] z-999 transition">
-			<button
-				class="select-none flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-				type="button"
+		<DropdownMenu.Content
+			class="w-full max-w-[200px] rounded-2xl px-1 py-1  border border-gray-100  dark:border-gray-800 z-999 bg-white dark:bg-gray-850 dark:text-white shadow-lg transition"
+			sideOffset={4}
+			alignOffset={-6}
+			side="bottom"
+			align="start"
+			transition={flyAndScale}
+		>
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl"
 				on:click={() => {
 					uploadFilesHandler();
-					show = false;
 				}}
 			>
-				<Clip className="size-3.5" />
+				<Clip />
 				<div class="line-clamp-1">{$i18n.t('Upload Files')}</div>
-			</button>
+			</DropdownMenu.Item>
 
-			<button
-				class="select-none flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-				type="button"
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50  rounded-xl"
 				on:click={() => {
 					screenCaptureHandler();
-					show = false;
 				}}
 			>
-				<Camera className="size-3.5" />
+				<Camera />
 				<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
-			</button>
-		</DropdownMenu>
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
 	</div>
 </Dropdown>

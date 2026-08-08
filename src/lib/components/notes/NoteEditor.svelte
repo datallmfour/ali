@@ -8,7 +8,6 @@
 
 	import { marked } from 'marked';
 	import { toast } from 'svelte-sonner';
-	import equal from 'fast-deep-equal';
 
 	import { goto } from '$app/navigation';
 
@@ -23,10 +22,10 @@
 
 	import { PaneGroup, Pane, PaneResizer } from 'paneforge';
 
-	import { compressImage, copyToClipboard, convertHeicToJpeg } from '$lib/utils';
-	import { WEBUI_BASE_URL } from '$lib/constants';
-	import { getFileById, uploadFile } from '$lib/apis/files';
-	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
+	import { compressImage, copyToClipboard, splitStream, convertHeicToJpeg } from '$lib/utils';
+	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
+	import { uploadFile } from '$lib/apis/files';
+	import { chatCompletion, generateOpenAIChatCompletion } from '$lib/apis/openai';
 
 	import {
 		config,
@@ -36,13 +35,13 @@
 		showSidebar,
 		socket,
 		user,
-		WEBUI_NAME,
-		pinnedNotes
+		WEBUI_NAME
 	} from '$lib/stores';
 
 	import { downloadPdf } from './utils';
 
-	import Chat from '$lib/components/chat/Chat.svelte';
+	import Controls from './NoteEditor/Controls.svelte';
+	import Chat from './NoteEditor/Chat.svelte';
 
 	import NotePanel from '$lib/components/notes/NotePanel.svelte';
 	import AccessControlModal from '$lib/components/workspace/common/AccessControlModal.svelte';
@@ -61,38 +60,35 @@
 	// Assuming $i18n.languages is an array of language codes
 	$: loadLocale($i18n.languages);
 
-	import {
-		deleteNoteById,
-		createNoteChatById,
-		getNoteById,
-		getNoteChatById,
-		getNoteChatsById,
-		updateNoteById,
-		updateNoteAccessGrants,
-		toggleNotePinnedStatusById,
-		getPinnedNoteList
-	} from '$lib/apis/notes';
-	import { deleteChatById } from '$lib/apis/chats';
+	import { deleteNoteById, getNoteById, updateNoteById } from '$lib/apis/notes';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
-	import FileItem from '../common/FileItem.svelte';
 	import Spinner from '../common/Spinner.svelte';
-	import Mic from '../icons/Mic.svelte';
+	import MicSolid from '../icons/MicSolid.svelte';
 	import VoiceRecording from '../chat/MessageInput/VoiceRecording.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import ChatBubbleOval from '../icons/ChatBubbleOval.svelte';
 
-	import AccessButton from '../common/AccessButton.svelte';
+	import Calendar from '../icons/Calendar.svelte';
+	import Users from '../icons/Users.svelte';
 
+	import Image from '../common/Image.svelte';
+	import FileItem from '../common/FileItem.svelte';
 	import FilesOverlay from '../chat/MessageInput/FilesOverlay.svelte';
 	import RecordMenu from './RecordMenu.svelte';
 	import NoteMenu from './Notes/NoteMenu.svelte';
 	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
+	import SparklesSolid from '../icons/SparklesSolid.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
+	import Bars3BottomLeft from '../icons/Bars3BottomLeft.svelte';
 	import ArrowUturnLeft from '../icons/ArrowUturnLeft.svelte';
 	import ArrowUturnRight from '../icons/ArrowUturnRight.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
-	import ChatBubbleOval from '../icons/ChatBubbleOval.svelte';
+	import ArrowRight from '../icons/ArrowRight.svelte';
+	import Cog6 from '../icons/Cog6.svelte';
+	import AiMenu from './AIMenu.svelte';
+	import AdjustmentsHorizontalOutline from '../icons/AdjustmentsHorizontalOutline.svelte';
 
 	export let id: null | string = null;
 
@@ -112,19 +108,11 @@
 		},
 		// pages: [], // TODO: Implement pages for notes to allow users to create multiple pages in a note
 		meta: null,
-		access_grants: []
+		access_control: {}
 	};
 
-	const hasPublicReadGrant = (grants) =>
-		Array.isArray(grants) &&
-		grants.some(
-			(grant) =>
-				grant?.principal_type === 'user' &&
-				grant?.principal_id === '*' &&
-				grant?.permission === 'read'
-		);
-
 	let files = [];
+	let messages = [];
 
 	let wordCount = 0;
 	let charCount = 0;
@@ -135,28 +123,10 @@
 	let recording = false;
 	let displayMediaRecord = false;
 
-	let showNoteChat = false;
-	let noteChatId = null;
-	let noteChatLoading = false;
-	let noteChats = [];
-	let noteChatDraftKey = '';
-	let noteChatCreating = false;
+	let showPanel = false;
+	let selectedPanel = 'chat';
 
 	let selectedContent = null;
-	let noteAttachmentFiles = [];
-	let noteChatSuggestedPrompts = [];
-	let pendingNoteEvent = null;
-	let pendingNoteEventTimer = null;
-	let lastLocalContentChangeAt = 0;
-	$: noteAttachmentFiles = (files ?? []).filter(
-		(file) => file?.type !== 'image' && !(file?.content_type ?? '').startsWith('image/')
-	);
-	$: noteChatSuggestedPrompts = [
-		$i18n.t('Enhance this note and update it.'),
-		$i18n.t('Summarize this note.'),
-		$i18n.t('Extract action items from this note.'),
-		$i18n.t('Rewrite the selected text.')
-	];
 
 	let showDeleteConfirm = false;
 	let showAccessControlModal = false;
@@ -168,12 +138,12 @@
 	let dragged = false;
 	let loading = false;
 
-	let inputElement = null;
+	let editing = false;
+	let streaming = false;
 
-	// Computed HTML for editor: fall back to markdown if HTML is missing
-	$: editorHtml =
-		note?.data?.content?.html ||
-		(note?.data?.content?.md ? marked.parse(note.data.content.md) : '');
+	let stopResponseFlag = false;
+
+	let inputElement = null;
 
 	const init = async () => {
 		loading = true;
@@ -182,21 +152,11 @@
 			return null;
 		});
 
+		messages = [];
+
 		if (res) {
 			note = res;
-			if (!Array.isArray(note?.access_grants)) {
-				note.access_grants = [];
-			}
 			files = res.data.files || [];
-
-			$socket?.emit('join-note', {
-				note_id: id,
-				auth: {
-					token: localStorage.token
-				}
-			});
-			$socket?.off('events:note', noteEventHandler);
-			$socket?.on('events:note', noteEventHandler);
 		} else {
 			goto('/');
 			return;
@@ -218,103 +178,11 @@
 				data: {
 					files: files
 				},
-				access_grants: note?.access_grants ?? []
+				access_control: note?.access_control
 			}).catch((e) => {
 				toast.error(`${e}`);
 			});
-
-			if (res) {
-				pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
-			}
 		}, 200);
-	};
-
-	const applyExternalNoteContent = async (_note) => {
-		const incomingContent = _note.data?.content;
-		const contentLength = incomingContent?.md?.length ?? incomingContent?.html?.length ?? 0;
-
-		console.info('[note-chat] external note event apply requested', {
-			noteId: _note.id,
-			eventUpdatedAt: _note.updated_at,
-			currentUpdatedAt: note?.updated_at,
-			editorPresent: !!editor,
-			contentLength
-		});
-
-		if (_note.updated_at && note?.updated_at && _note.updated_at < note.updated_at) {
-			console.info('[note-chat] external note event skipped', {
-				noteId: _note.id,
-				reason: 'stale',
-				eventUpdatedAt: _note.updated_at,
-				currentUpdatedAt: note.updated_at,
-				contentLength
-			});
-			return false;
-		}
-
-		const elapsed = Date.now() - lastLocalContentChangeAt;
-		if (elapsed < 800) {
-			pendingNoteEvent = _note;
-			if (pendingNoteEventTimer) {
-				clearTimeout(pendingNoteEventTimer);
-			}
-			pendingNoteEventTimer = setTimeout(async () => {
-				const event = pendingNoteEvent;
-				pendingNoteEvent = null;
-				if (event) {
-					await applyExternalNoteContent(event);
-				}
-			}, 850 - elapsed);
-
-			console.info('[note-chat] external note event deferred', {
-				noteId: _note.id,
-				reason: 'local-edit-settling',
-				eventUpdatedAt: _note.updated_at,
-				contentLength
-			});
-			return false;
-		}
-
-		note.data.content = {
-			...note.data.content,
-			...incomingContent
-		};
-		if (_note.updated_at) {
-			note.updated_at = _note.updated_at;
-		}
-
-		if (!editor) {
-			console.info('[note-chat] external note event applied', {
-				noteId: _note.id,
-				reason: 'no-editor',
-				eventUpdatedAt: _note.updated_at,
-				contentLength
-			});
-			return true;
-		}
-
-		const selection = editor.state.selection;
-		editor.commands.setContent(incomingContent.html || marked.parse(incomingContent.md ?? ''));
-		await tick();
-
-		const docSize = editor.state.doc.content.size;
-		const from = Math.min(selection.from, docSize);
-		const to = Math.min(selection.to, docSize);
-		if (from < to) {
-			editor.commands.setTextSelection({ from, to });
-			const text = editor.state.doc.textBetween(from, to, ' ');
-			selectedContent = text ? { text, from, to } : null;
-		} else {
-			selectedContent = null;
-		}
-
-		console.info('[note-chat] external note event applied', {
-			noteId: _note.id,
-			reason: 'content',
-			eventUpdatedAt: _note.updated_at,
-			contentLength
-		});
-		return true;
 	};
 
 	$: if (id) {
@@ -322,7 +190,7 @@
 	}
 
 	function areContentsEqual(a, b) {
-		return equal(a, b);
+		return JSON.stringify(a) === JSON.stringify(b);
 	}
 
 	function insertNoteVersion(note) {
@@ -340,26 +208,32 @@
 		return false;
 	}
 
+	const onEdited = async () => {
+		if (!editor) return;
+		editor.commands.setContent(note.data.content.html);
+	};
+
 	const generateTitleHandler = async () => {
 		const content = note.data.content.md;
 		const DEFAULT_TITLE_GENERATION_PROMPT_TEMPLATE = `### Task:
-Generate a concise title summarizing the content in the content's primary language.
+Generate a concise, 3-5 word title with an emoji summarizing the content in the content's primary language.
 ### Guidelines:
 - The title should clearly represent the main theme or subject of the content.
-- Keep it short: 2-4 words is best.
-- Do not use emojis, quotation marks, or special formatting.
+- Use emojis that enhance understanding of the topic, but avoid quotation marks or special formatting.
 - Write the title in the content's primary language.
-- Prioritize accuracy over creativity.
+- Prioritize accuracy over excessive creativity; keep it clear and simple.
 - Your entire response must consist solely of the JSON object, without any introductory or concluding text.
 - The output must be a single, raw JSON object, without any markdown code fences or other encapsulating text.
 - Ensure no conversational text, affirmations, or explanations precede or follow the raw JSON output, as this will cause direct parsing failure.
 ### Output:
 JSON format: { "title": "your concise title here" }
 ### Examples:
-- { "title": "Stock Trends" },
-- { "title": "Chocolate Chip Cookies" },
-- { "title": "Music Streaming" },
-- { "title": "Remote Work" }
+- { "title": "📉 Stock Market Trends" },
+- { "title": "🍪 Perfect Chocolate Chip Recipe" },
+- { "title": "Evolution of Music Streaming" },
+- { "title": "Remote Work Productivity Tips" },
+- { "title": "Artificial Intelligence in Healthcare" },
+- { "title": "🎮 Video Game Development Insights" }
 ### Content:
 <content>
 ${content}
@@ -412,6 +286,34 @@ ${content}
 		titleGenerating = false;
 		await tick();
 		changeDebounceHandler();
+	};
+
+	async function enhanceNoteHandler() {
+		if (selectedModelId === '') {
+			toast.error($i18n.t('Please select a model.'));
+			return;
+		}
+
+		const model = $models
+			.filter((model) => model.id === selectedModelId && !(model?.info?.meta?.hidden ?? false))
+			.find((model) => model.id === selectedModelId);
+
+		if (!model) {
+			selectedModelId = '';
+			return;
+		}
+
+		editing = true;
+		await enhanceCompletionHandler(model);
+		editing = false;
+
+		onEdited();
+		versionIdx = null;
+	}
+
+	const stopResponseHandler = async () => {
+		stopResponseFlag = true;
+		console.log('stopResponse', stopResponseFlag);
 	};
 
 	function setContentByVersion(versionIdx) {
@@ -491,6 +393,13 @@ ${content}
 
 		files = [...files, fileItem];
 
+		// open the settings panel if it is not open
+		selectedPanel = 'settings';
+
+		if (!showPanel) {
+			showPanel = true;
+		}
+
 		try {
 			// If the file is an audio file, provide the language for STT.
 			let metadata = null;
@@ -507,7 +416,11 @@ ${content}
 			const uploadedFile = await uploadFile(localStorage.token, file, metadata);
 
 			if (uploadedFile) {
-				console.log('File upload completed:', uploadedFile);
+				console.log('File upload completed:', {
+					id: uploadedFile.id,
+					name: fileItem.name,
+					collection: uploadedFile?.meta?.collection_name
+				});
 
 				if (uploadedFile.error) {
 					console.warn('File upload warning:', uploadedFile.error);
@@ -515,15 +428,12 @@ ${content}
 				}
 
 				fileItem.status = 'uploaded';
-				fileItem.file = await getFileById(localStorage.token, uploadedFile.id).catch((e) => {
-					toast.error(`${e}`);
-					return null;
-				});
+				fileItem.file = uploadedFile;
 				fileItem.id = uploadedFile.id;
 				fileItem.collection_name =
 					uploadedFile?.meta?.collection_name || uploadedFile?.collection_name;
 
-				fileItem.url = `${uploadedFile.id}`;
+				fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
 
 				files = files;
 			} else {
@@ -540,9 +450,7 @@ ${content}
 			note.data.files = null;
 		}
 
-		if (editor) {
-			editor.storage.files = files;
-		}
+		editor.storage.files = files;
 
 		changeDebounceHandler();
 
@@ -625,9 +533,7 @@ ${content}
 						};
 						files = [...files, fileItem];
 						note.data.files = files;
-						if (editor) {
-							editor.storage.files = files;
-						}
+						editor.storage.files = files;
 
 						changeDebounceHandler();
 						resolve(fileItem);
@@ -650,127 +556,6 @@ ${content}
 		inputFiles.forEach(async (file) => {
 			await inputFileHandler(file);
 		});
-	};
-
-	const uploadNoteFilesHandler = () => {
-		const input = document.createElement('input');
-		input.type = 'file';
-		input.multiple = true;
-		input.click();
-
-		input.onchange = async () => {
-			const inputFiles = Array.from(input.files ?? []);
-			if (inputFiles.length > 0) {
-				await inputFilesHandler(inputFiles);
-			}
-		};
-	};
-
-	const openNoteChat = async () => {
-		console.info('[note-chat] open requested', {
-			noteId: note?.id,
-			alreadyLoading: noteChatLoading,
-			currentChatId: noteChatId,
-			sidebarOpen: showNoteChat
-		});
-		if (!note?.id || noteChatLoading) return;
-
-		noteChatLoading = true;
-		const chat = await getNoteChatById(localStorage.token, note.id).catch((error) => {
-			console.error('[note-chat] open failed', { noteId: note?.id, error });
-			toast.error(`${error}`);
-			return null;
-		});
-		const chats = chat
-			? await getNoteChatsById(localStorage.token, note.id).catch((error) => {
-					console.error('[note-chat] history failed', { noteId: note?.id, error });
-					return null;
-				})
-			: null;
-		noteChatLoading = false;
-
-		if (chat?.id) {
-			console.info('[note-chat] open resolved', {
-				noteId: note.id,
-				chatId: chat.id,
-				title: chat.title,
-				hasChatPayload: !!chat.chat
-			});
-			noteChatId = chat.id;
-			noteChats = chats ?? [chat];
-			showNoteChat = true;
-		} else {
-			console.warn('[note-chat] open returned no chat id', { noteId: note.id, chat });
-		}
-	};
-
-	const createNoteChat = async () => {
-		if (!note?.id || noteChatLoading) return;
-
-		noteChatId = null;
-		noteChatDraftKey = `${Date.now()}`;
-		showNoteChat = true;
-	};
-
-	const createNoteChatOnFirstMessage = async () => {
-		if (!note?.id || noteChatCreating) return null;
-
-		noteChatCreating = true;
-		try {
-			const chat = await createNoteChatById(localStorage.token, note.id).catch((error) => {
-				console.error('[note-chat] create failed', { noteId: note?.id, error });
-				toast.error(`${error}`);
-				return null;
-			});
-			const chats = chat
-				? await getNoteChatsById(localStorage.token, note.id).catch((error) => {
-						console.error('[note-chat] history failed', { noteId: note?.id, error });
-						return null;
-					})
-				: null;
-
-			if (chat?.id) {
-				noteChats = chats ?? [chat, ...noteChats.filter((item) => item.id !== chat.id)];
-				showNoteChat = true;
-			}
-
-			return chat;
-		} finally {
-			noteChatCreating = false;
-		}
-	};
-
-	const deleteNoteChat = async (chatId) => {
-		if (!note?.id || !chatId) return;
-
-		const deleted = await deleteChatById(localStorage.token, chatId).catch((error) => {
-			console.error('[note-chat] delete failed', { noteId: note?.id, chatId, error });
-			toast.error(`${error}`);
-			return null;
-		});
-
-		if (!deleted) return;
-
-		let chats =
-			(await getNoteChatsById(localStorage.token, note.id).catch((error) => {
-				console.error('[note-chat] history failed', { noteId: note?.id, error });
-				return null;
-			})) ?? [];
-
-		if (noteChatId === chatId) {
-			let nextChat = chats[0];
-			if (!nextChat) {
-				nextChat = await getNoteChatById(localStorage.token, note.id).catch((error) => {
-					console.error('[note-chat] recreate failed after delete', { noteId: note?.id, error });
-					toast.error(`${error}`);
-					return null;
-				});
-				chats = nextChat ? [nextChat] : [];
-			}
-			noteChatId = nextChat?.id ?? null;
-		}
-
-		noteChats = chats;
 	};
 
 	const downloadHandler = async (type) => {
@@ -797,12 +582,118 @@ ${content}
 		});
 
 		if (res) {
-			pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
 			toast.success($i18n.t('Note deleted successfully'));
 			goto('/notes');
 		} else {
 			toast.error($i18n.t('Failed to delete note'));
 		}
+	};
+
+	const scrollToBottom = () => {
+		const element = document.getElementById('note-content-container');
+
+		if (element) {
+			element.scrollTop = element?.scrollHeight;
+		}
+	};
+
+	const enhanceCompletionHandler = async (model) => {
+		stopResponseFlag = false;
+		let enhancedContent = {
+			json: null,
+			html: '',
+			md: ''
+		};
+
+		const systemPrompt = `Enhance existing notes using additional context provided from audio transcription or uploaded file content in the content's primary language. Your task is to make the notes more useful and comprehensive by incorporating relevant information from the provided context.
+
+Input will be provided within <notes> and <context> XML tags, providing a structure for the existing notes and context respectively.
+
+# Output Format
+
+Provide the enhanced notes in markdown format. Use markdown syntax for headings, lists, task lists ([ ]) where tasks or checklists are strongly implied, and emphasis to improve clarity and presentation. Ensure that all integrated content from the context is accurately reflected. Return only the markdown formatted note.
+`;
+
+		const [res, controller] = await chatCompletion(
+			localStorage.token,
+			{
+				model: model.id,
+				stream: true,
+				messages: [
+					{
+						role: 'system',
+						content: systemPrompt
+					},
+					{
+						role: 'user',
+						content:
+							`<notes>${note.data.content.md}</notes>` +
+							(files && files.length > 0
+								? `\n<context>${files.map((file) => `${file.name}: ${file?.file?.data?.content ?? 'Could not extract content'}\n`).join('')}</context>`
+								: '')
+					}
+				]
+			},
+			`${WEBUI_BASE_URL}/api`
+		);
+
+		await tick();
+
+		streaming = true;
+
+		if (res && res.ok) {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done || stopResponseFlag) {
+					if (stopResponseFlag) {
+						controller.abort('User: Stop Response');
+					}
+
+					editing = false;
+					streaming = false;
+					break;
+				}
+
+				try {
+					let lines = value.split('\n');
+
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							if (line === 'data: [DONE]') {
+								console.log(line);
+							} else {
+								let data = JSON.parse(line.replace(/^data: /, ''));
+								console.log(data);
+
+								if (data.choices && data.choices.length > 0) {
+									const choice = data.choices[0];
+									if (choice.delta && choice.delta.content) {
+										enhancedContent.md += choice.delta.content;
+										enhancedContent.html = marked.parse(enhancedContent.md);
+
+										note.data.content.md = enhancedContent.md;
+										note.data.content.html = enhancedContent.html;
+										note.data.content.json = null;
+
+										scrollToBottom();
+									}
+								}
+							}
+						}
+					}
+				} catch (error) {
+					console.log(error);
+				}
+			}
+		}
+
+		streaming = false;
 	};
 
 	const onDragOver = (e) => {
@@ -860,45 +751,24 @@ ${content}
 		console.log('noteEventHandler', _note);
 		if (_note.id !== id) return;
 
-		if (_note.updated_at && note?.updated_at && _note.updated_at < note.updated_at) {
-			console.info('[note-chat] external note event skipped', {
-				noteId: _note.id,
-				reason: 'stale-event',
-				eventUpdatedAt: _note.updated_at,
-				currentUpdatedAt: note.updated_at,
-				contentLength: _note.data?.content?.md?.length ?? _note.data?.content?.html?.length ?? 0
-			});
-			return;
+		if (_note.access_control && _note.access_control !== note.access_control) {
+			note.access_control = _note.access_control;
 		}
 
-		if (_note.access_grants && _note.access_grants !== note.access_grants) {
-			note.access_grants = _note.access_grants;
-		}
-
-		if (_note.data && 'files' in _note.data) {
-			files = _note.data.files ?? [];
-			note.data.files = files.length > 0 ? files : null;
-		}
-
-		if (_note.data?.content) {
-			await applyExternalNoteContent(_note);
+		if (_note.data && _note.data.files) {
+			files = _note.data.files;
+			note.data.files = files;
 		}
 
 		if (_note.title && _note.title) {
 			note.title = _note.title;
 		}
 
-		if (_note.updated_at) {
-			note.updated_at = _note.updated_at;
-		}
-
-		if (editor) {
-			editor.storage.files = files;
-		}
+		editor.storage.files = files;
 		await tick();
 
 		for (const file of files) {
-			if (file.type === 'image' || (file?.content_type ?? '').startsWith('image/')) {
+			if (file.type === 'image') {
 				const e = new CustomEvent('data', { files: files });
 
 				const img = document.getElementById(`image:${file.id}`);
@@ -911,6 +781,13 @@ ${content}
 
 	onMount(async () => {
 		await tick();
+		$socket?.emit('join-note', {
+			note_id: id,
+			auth: {
+				token: localStorage.token
+			}
+		});
+		$socket?.on('note-events', noteEventHandler);
 
 		if ($settings?.models) {
 			selectedModelId = $settings?.models[0];
@@ -944,10 +821,7 @@ ${content}
 
 	onDestroy(() => {
 		console.log('destroy');
-		$socket?.off('events:note', noteEventHandler);
-		if (pendingNoteEventTimer) {
-			clearTimeout(pendingNoteEventTimer);
-		}
+		$socket?.off('note-events', noteEventHandler);
 
 		const dropzoneElement = document.getElementById('note-editor');
 
@@ -962,7 +836,7 @@ ${content}
 <svelte:head>
 	<title>
 		{note?.title
-			? `${note?.title.length > 30 ? `${note?.title.slice(0, 30)}...` : note?.title} / ${$WEBUI_NAME}`
+			? `${note?.title.length > 30 ? `${note?.title.slice(0, 30)}...` : note?.title} • ${$WEBUI_NAME}`
 			: `${$WEBUI_NAME}`}
 	</title>
 </svelte:head>
@@ -970,20 +844,10 @@ ${content}
 {#if note}
 	<AccessControlModal
 		bind:show={showAccessControlModal}
-		bind:accessGrants={note.access_grants}
+		bind:accessControl={note.access_control}
 		accessRoles={['read', 'write']}
-		share={$user?.permissions?.sharing?.notes || $user?.role === 'admin'}
-		sharePublic={$user?.permissions?.sharing?.public_notes || $user?.role === 'admin'}
-		shareUsers={($user?.permissions?.access_grants?.allow_users ?? true) || $user?.role === 'admin'}
-		onChange={async () => {
-			if (id) {
-				try {
-					await updateNoteAccessGrants(localStorage.token, id, note.access_grants ?? []);
-					toast.success($i18n.t('Saved'));
-				} catch (error) {
-					toast.error(`${error}`);
-				}
-			}
+		onChange={() => {
+			changeDebounceHandler();
 		}}
 	/>
 {/if}
@@ -999,13 +863,13 @@ ${content}
 	}}
 >
 	<div class=" text-sm text-gray-500">
-		{$i18n.t('This will delete')} <span class="  font-normal">{note.title}</span>.
+		{$i18n.t('This will delete')} <span class="  font-semibold">{note.title}</span>.
 	</div>
 </DeleteConfirmDialog>
 
 <PaneGroup direction="horizontal" class="w-full h-full">
 	<Pane defaultSize={70} minSize={30} class="h-full flex flex-col w-full relative">
-		<div class="relative flex-1 w-full h-full flex justify-center pt-2" id="note-editor">
+		<div class="relative flex-1 w-full h-full flex justify-center pt-[11px]" id="note-editor">
 			{#if loading}
 				<div class=" absolute top-0 bottom-0 left-0 right-0 flex">
 					<div class="m-auto">
@@ -1014,32 +878,34 @@ ${content}
 				</div>
 			{:else}
 				<div class=" w-full flex flex-col {loading ? 'opacity-20' : ''}">
-					<div class="shrink-0 w-full flex justify-between items-center px-3">
-						<div class="w-full min-w-0 flex items-center">
+					<div class="shrink-0 w-full flex justify-between items-center px-3.5 mb-1.5">
+						<div class="w-full flex items-center">
 							{#if $mobile}
-								<Tooltip
-									content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
+								<div
+									class="{$showSidebar
+										? 'md:hidden pl-0.5'
+										: ''} flex flex-none items-center pr-1 -translate-x-1"
 								>
-									<button
-										id="sidebar-toggle-button"
-										class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition cursor-"
-										aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
-										type="button"
-										on:click={() => {
-											showSidebar.set(!$showSidebar);
-										}}
+									<Tooltip
+										content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 									>
-										<div class=" self-center p-1.5">
-											<Sidebar className="size-4" />
-										</div>
-									</button>
-								</Tooltip>
+										<button
+											id="sidebar-toggle-button"
+											class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition cursor-"
+											on:click={() => {
+												showSidebar.set(!$showSidebar);
+											}}
+										>
+											<div class=" self-center p-1.5">
+												<Sidebar />
+											</div>
+										</button>
+									</Tooltip>
+								</div>
 							{/if}
 
 							<input
-								class="w-full text-sm font-normal bg-transparent outline-hidden {$mobile
-									? 'ml-1'
-									: ''}"
+								class="w-full text-2xl font-medium bg-transparent outline-hidden"
 								type="text"
 								bind:value={note.title}
 								placeholder={titleGenerating ? $i18n.t('Generating...') : $i18n.t('Title')}
@@ -1063,11 +929,11 @@ ${content}
 
 							{#if titleInputFocused && !titleGenerating}
 								<div
-									class="flex self-center items-center space-x-1.5 z-10 translate-y-[0.5px] -translate-x-[0.5px] pl-2 pr-0.5"
+									class="flex self-center items-center space-x-1.5 z-10 translate-y-[0.5px] -translate-x-[0.5px] pl-2"
 								>
 									<Tooltip content={$i18n.t('Generate')}>
 										<button
-											class="flex size-5 items-center justify-center self-center dark:hover:text-white transition disabled:cursor-not-allowed"
+											class=" self-center dark:hover:text-white transition"
 											id="generate-title-button"
 											disabled={(note?.user_id !== $user?.id && $user?.role !== 'admin') ||
 												titleGenerating}
@@ -1083,112 +949,78 @@ ${content}
 												titleInputFocused = false;
 											}}
 										>
-											<Sparkles strokeWidth="1.5" />
+											<Sparkles strokeWidth="2" />
 										</button>
 									</Tooltip>
 								</div>
 							{/if}
 
-							<div class="flex items-center gap-0.5 shrink-0">
-								{#if note?.write_access}
-									{#if editor}
-										<div>
-											<div class="flex items-center gap-0.5 self-center min-w-fit" dir="ltr">
-												<button
-													class="self-center p-1 hover:enabled:bg-black/5 dark:hover:enabled:bg-white/5 dark:hover:enabled:text-white hover:enabled:text-black rounded-md transition disabled:cursor-not-allowed disabled:text-gray-500 disabled:hover:text-gray-500"
-													on:click={() => {
-														editor.chain().focus().undo().run();
-														// versionNavigateHandler('prev');
-													}}
-													disabled={!editor.can().undo()}
-												>
-													<ArrowUturnLeft className="size-4" />
-												</button>
+							<div class="flex items-center gap-0.5 translate-x-1">
+								{#if editor}
+									<div>
+										<div class="flex items-center gap-0.5 self-center min-w-fit" dir="ltr">
+											<button
+												class="self-center p-1 hover:enabled:bg-black/5 dark:hover:enabled:bg-white/5 dark:hover:enabled:text-white hover:enabled:text-black rounded-md transition disabled:cursor-not-allowed disabled:text-gray-500 disabled:hover:text-gray-500"
+												on:click={() => {
+													editor.chain().focus().undo().run();
+													// versionNavigateHandler('prev');
+												}}
+												disabled={!editor.can().undo()}
+											>
+												<ArrowUturnLeft className="size-4" />
+											</button>
 
-												<button
-													class="self-center p-1 hover:enabled:bg-black/5 dark:hover:enabled:bg-white/5 dark:hover:enabled:text-white hover:enabled:text-black rounded-md transition disabled:cursor-not-allowed disabled:text-gray-500 disabled:hover:text-gray-500"
-													on:click={() => {
-														editor.chain().focus().redo().run();
-														// versionNavigateHandler('next');
-													}}
-													disabled={!editor.can().redo()}
-												>
-													<ArrowUturnRight className="size-4" />
-												</button>
-											</div>
+											<button
+												class="self-center p-1 hover:enabled:bg-black/5 dark:hover:enabled:bg-white/5 dark:hover:enabled:text-white hover:enabled:text-black rounded-md transition disabled:cursor-not-allowed disabled:text-gray-500 disabled:hover:text-gray-500"
+												on:click={() => {
+													editor.chain().focus().redo().run();
+													// versionNavigateHandler('next');
+												}}
+												disabled={!editor.can().redo()}
+											>
+												<ArrowUturnRight className="size-4" />
+											</button>
 										</div>
-									{/if}
+									</div>
 								{/if}
 
-								<Tooltip content={$i18n.t('Chat')} placement="top">
+								<Tooltip placement="top" content={$i18n.t('Chat')} className="cursor-pointer">
 									<button
-										type="button"
-										class="p-1 bg-transparent hover:bg-white/5 transition rounded-lg"
-										aria-label={$i18n.t('Chat')}
-										on:click={openNoteChat}
+										class="p-1.5 bg-transparent hover:bg-white/5 transition rounded-lg"
+										on:click={() => {
+											if (showPanel && selectedPanel === 'chat') {
+												showPanel = false;
+											} else {
+												if (!showPanel) {
+													showPanel = true;
+												}
+												selectedPanel = 'chat';
+											}
+										}}
 									>
-										<ChatBubbleOval className="size-4" strokeWidth="1.8" />
+										<ChatBubbleOval />
 									</button>
 								</Tooltip>
 
-								{#if note?.write_access}
-									<RecordMenu
-										onRecord={async () => {
-											displayMediaRecord = false;
-
-											try {
-												let stream = await navigator.mediaDevices
-													.getUserMedia({ audio: true })
-													.catch(function (err) {
-														toast.error(
-															$i18n.t(`Permission denied when accessing microphone: {{error}}`, {
-																error: err
-															})
-														);
-														return null;
-													});
-
-												if (stream) {
-													recording = true;
-													const tracks = stream.getTracks();
-													tracks.forEach((track) => track.stop());
+								<Tooltip placement="top" content={$i18n.t('Controls')} className="cursor-pointer">
+									<button
+										class="p-1.5 bg-transparent hover:bg-white/5 transition rounded-lg"
+										on:click={() => {
+											if (showPanel && selectedPanel === 'settings') {
+												showPanel = false;
+											} else {
+												if (!showPanel) {
+													showPanel = true;
 												}
-												stream = null;
-											} catch {
-												toast.error($i18n.t('Permission denied when accessing microphone'));
+												selectedPanel = 'settings';
 											}
 										}}
-										onCaptureAudio={async () => {
-											displayMediaRecord = true;
-
-											recording = true;
-										}}
-										onUpload={async () => {
-											const input = document.createElement('input');
-											input.type = 'file';
-											input.accept = 'audio/*';
-											input.multiple = false;
-											input.click();
-
-											input.onchange = async (e) => {
-												const files = e.target.files;
-
-												if (files && files.length > 0) {
-													await uploadFileHandler(files[0]);
-												}
-											};
-										}}
 									>
-										<Tooltip content={$i18n.t('Record')} placement="top">
-											<div class="p-1 bg-transparent hover:bg-white/5 transition rounded-lg">
-												<Mic className="size-4" />
-											</div>
-										</Tooltip>
-									</RecordMenu>
-								{/if}
+										<AdjustmentsHorizontalOutline />
+									</button>
+								</Tooltip>
 
 								<NoteMenu
-									onUploadFiles={note?.write_access ? uploadNoteFilesHandler : null}
 									onDownload={(type) => {
 										downloadHandler(type);
 									}}
@@ -1219,37 +1051,16 @@ ${content}
 									onDelete={() => {
 										showDeleteConfirm = true;
 									}}
-									isPinned={$pinnedNotes.some((n) => n.id === note.id)}
-									onPin={async () => {
-										await toggleNotePinnedStatusById(localStorage.token, note.id);
-										note = await getNoteById(localStorage.token, note.id);
-										pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
-									}}
 								>
 									<div class="p-1 bg-transparent hover:bg-white/5 transition rounded-lg">
 										<EllipsisHorizontal className="size-5" />
 									</div>
 								</NoteMenu>
-
-								{#if note?.write_access}
-									<div class="ml-1.5">
-										<AccessButton
-											on:click={() => {
-												showAccessControlModal = true;
-											}}
-											disabled={note?.user_id !== $user?.id && $user?.role !== 'admin'}
-										/>
-									</div>
-								{:else}
-									<div class="shrink-0 text-xs text-gray-500 px-2 py-1">
-										{$i18n.t('Read-Only Access')}
-									</div>
-								{/if}
 							</div>
 						</div>
 					</div>
 
-					<div class="  px-1.5">
+					<div class="  px-2.5">
 						<div
 							class=" flex w-full bg-transparent overflow-x-auto scrollbar-none"
 							on:wheel={(e) => {
@@ -1260,9 +1071,11 @@ ${content}
 							}}
 						>
 							<div
-								class="flex gap-0.5 items-center text-xs font-normal text-gray-500 dark:text-gray-500 w-fit"
+								class="flex gap-1 items-center text-xs font-medium text-gray-500 dark:text-gray-500 w-fit"
 							>
 								<button class=" flex items-center gap-1 w-fit py-1 px-1.5 rounded-lg min-w-fit">
+									<Calendar className="size-3.5" strokeWidth="2" />
+
 									<!-- check for same date, yesterday, last week, and other -->
 
 									{#if dayjs(note.created_at / 1000000).isSame(dayjs(), 'day')}
@@ -1286,6 +1099,18 @@ ${content}
 									{/if}
 								</button>
 
+								<button
+									class=" flex items-center gap-1 w-fit py-1 px-1.5 rounded-lg min-w-fit"
+									on:click={() => {
+										showAccessControlModal = true;
+									}}
+									disabled={note?.user_id !== $user?.id && $user?.role !== 'admin'}
+								>
+									<Users className="size-3.5" strokeWidth="2" />
+
+									<span> {note?.access_control ? $i18n.t('Private') : $i18n.t('Everyone')} </span>
+								</button>
+
 								{#if editor}
 									<div class="flex items-center gap-1 px-1 min-w-fit">
 										<div>
@@ -1305,45 +1130,25 @@ ${content}
 					</div>
 
 					<div
-						class=" flex-1 w-full h-full overflow-auto px-3 relative flex flex-col"
+						class=" flex-1 w-full h-full overflow-auto px-3.5 pb-20 relative pt-2.5"
 						id="note-content-container"
 					>
-						{#if noteAttachmentFiles.length > 0}
-							<div class="shrink-0 flex flex-wrap gap-1.5 px-0.5 pt-1.5 pb-2">
-								{#each noteAttachmentFiles as file, fileIdx (file?.id ?? file?.itemId ?? file?.url ?? fileIdx)}
-									<FileItem
-										item={file}
-										name={file.name}
-										type={file.type}
-										size={file?.size}
-										loading={file.status === 'uploading'}
-										dismissible={versionIdx === null && note?.write_access}
-										edit={true}
-										small={true}
-										modal={['file', 'collection'].includes(file?.type)}
-										className="w-56 max-w-full"
-										colorClassName="bg-gray-50/60 dark:bg-white/[0.03] border border-gray-100/80 dark:border-white/5"
-										on:dismiss={() => {
-											files = files.filter((item) => item !== file);
-											note.data.files = files.length > 0 ? files : null;
-											if (editor) {
-												editor.storage.files = files;
-											}
-											changeDebounceHandler();
-										}}
-									/>
-								{/each}
-							</div>
+						{#if editing}
+							<div
+								class="w-full h-full fixed top-0 left-0 {streaming
+									? ''
+									: ' backdrop-blur-xs  bg-white/10 dark:bg-gray-900/10'} flex items-center justify-center z-10 cursor-not-allowed"
+							></div>
 						{/if}
 
 						<RichTextInput
 							bind:this={inputElement}
 							bind:editor
 							id={`note-${note.id}`}
-							className="input-prose-sm px-0.5 flex-1 min-h-[12rem]"
+							className="input-prose-sm px-0.5"
 							json={true}
 							bind:value={note.data.content.json}
-							html={editorHtml}
+							html={note.data?.content?.html}
 							documentId={`note:${note.id}`}
 							collaboration={true}
 							socket={$socket}
@@ -1353,7 +1158,7 @@ ${content}
 							image={true}
 							{files}
 							placeholder={$i18n.t('Write something...')}
-							editable={versionIdx === null && note?.write_access}
+							editable={versionIdx === null && !editing}
 							onSelectionUpdate={({ editor }) => {
 								const { from, to } = editor.state.selection;
 								const selectedText = editor.state.doc.textBetween(from, to, ' ');
@@ -1369,7 +1174,6 @@ ${content}
 								}
 							}}
 							onChange={(content) => {
-								lastLocalContentChangeAt = Date.now();
 								note.data.content.html = content.html;
 								note.data.content.md = content.md;
 
@@ -1385,7 +1189,7 @@ ${content}
 										return null;
 									});
 
-									if (fileItem?.type === 'image') {
+									if (fileItem.type === 'image') {
 										// If the file is an image, insert it directly
 										currentEditor
 											.chain()
@@ -1439,71 +1243,154 @@ ${content}
 				</div>
 			{/if}
 		</div>
-		{#if recording}
-			<div class="absolute z-50 bottom-0 right-0 p-3.5 flex select-none">
-				<div class="flex-1 w-full">
-					<VoiceRecording
-						bind:recording
-						className="p-1 w-full max-w-full"
-						transcribe={false}
-						displayMedia={displayMediaRecord}
-						echoCancellation={false}
-						noiseSuppression={false}
-						onCancel={() => {
-							recording = false;
-							displayMediaRecord = false;
-						}}
-						onConfirm={(data) => {
-							if (data?.file) {
-								uploadFileHandler(data?.file);
-							}
-
-							recording = false;
-							displayMediaRecord = false;
-						}}
-					/>
-				</div>
-			</div>
-		{/if}
-	</Pane>
-	<NotePanel bind:show={showNoteChat}>
-		{#if noteChatLoading}
-			<div class="flex h-full items-center justify-center">
-				<Spinner className="size-5" />
-			</div>
-		{:else if noteChatId || noteChatDraftKey}
-			<Chat
-				embedded={true}
-				chatIdProp={noteChatId ?? ''}
-				embeddedChats={noteChats}
-				embeddedDraftKey={noteChatDraftKey}
-				suggestedPrompts={noteChatSuggestedPrompts}
-				selectedText={selectedContent?.text ?? ''}
-				onInsertToNote={insertHandler}
-				onNewEmbeddedChat={createNoteChat}
-				onCreateEmbeddedChat={createNoteChatOnFirstMessage}
-				onSelectEmbeddedChat={(chatId) => {
-					if (!chatId || chatId === noteChatId) return;
-					noteChatId = chatId;
-					noteChatDraftKey = '';
-				}}
-				onDeleteEmbeddedChat={deleteNoteChat}
-				onEmbeddedChatTitle={(chatId, title) => {
-					noteChats = noteChats.map((chat) =>
-						chat.id === chatId
-							? {
-									...chat,
-									title,
-									chat: {
-										...(chat.chat ?? {}),
-										title
-									}
+		<div class="absolute z-20 bottom-0 right-0 p-3.5 max-w-full w-full flex">
+			<div class="flex gap-1 w-full min-w-full justify-between">
+				{#if recording}
+					<div class="flex-1 w-full">
+						<VoiceRecording
+							bind:recording
+							className="p-1 w-full max-w-full"
+							transcribe={false}
+							displayMedia={displayMediaRecord}
+							echoCancellation={false}
+							noiseSuppression={false}
+							onCancel={() => {
+								recording = false;
+								displayMediaRecord = false;
+							}}
+							onConfirm={(data) => {
+								if (data?.file) {
+									uploadFileHandler(data?.file);
 								}
-							: chat
-					);
+
+								recording = false;
+								displayMediaRecord = false;
+							}}
+						/>
+					</div>
+				{:else}
+					<RecordMenu
+						onRecord={async () => {
+							displayMediaRecord = false;
+
+							try {
+								let stream = await navigator.mediaDevices
+									.getUserMedia({ audio: true })
+									.catch(function (err) {
+										toast.error(
+											$i18n.t(`Permission denied when accessing microphone: {{error}}`, {
+												error: err
+											})
+										);
+										return null;
+									});
+
+								if (stream) {
+									recording = true;
+									const tracks = stream.getTracks();
+									tracks.forEach((track) => track.stop());
+								}
+								stream = null;
+							} catch {
+								toast.error($i18n.t('Permission denied when accessing microphone'));
+							}
+						}}
+						onCaptureAudio={async () => {
+							displayMediaRecord = true;
+
+							recording = true;
+						}}
+						onUpload={async () => {
+							const input = document.createElement('input');
+							input.type = 'file';
+							input.accept = 'audio/*';
+							input.multiple = false;
+							input.click();
+
+							input.onchange = async (e) => {
+								const files = e.target.files;
+
+								if (files && files.length > 0) {
+									await uploadFileHandler(files[0]);
+								}
+							};
+						}}
+					>
+						<Tooltip content={$i18n.t('Record')} placement="top">
+							<div
+								class="cursor-pointer p-2.5 flex rounded-full border border-gray-50 bg-white dark:border-none dark:bg-gray-850 hover:bg-gray-50 dark:hover:bg-gray-800 transition shadow-xl"
+							>
+								<MicSolid className="size-4.5" />
+							</div>
+						</Tooltip>
+					</RecordMenu>
+
+					<div
+						class="cursor-pointer flex gap-0.5 rounded-full border border-gray-50 dark:border-gray-850/30 dark:bg-gray-850 transition shadow-xl"
+					>
+						<Tooltip content={$i18n.t('AI')} placement="top">
+							{#if editing}
+								<button
+									class="p-2 flex justify-center items-center hover:bg-gray-50 dark:hover:bg-gray-800 rounded-full transition shrink-0"
+									on:click={() => {
+										stopResponseHandler();
+									}}
+									type="button"
+								>
+									<Spinner className="size-5" />
+								</button>
+							{:else}
+								<AiMenu
+									onEdit={() => {
+										enhanceNoteHandler();
+									}}
+									onChat={() => {
+										showPanel = true;
+										selectedPanel = 'chat';
+									}}
+								>
+									<div
+										class="cursor-pointer p-2.5 flex rounded-full border border-gray-50 bg-white dark:border-none dark:bg-gray-850 hover:bg-gray-50 dark:hover:bg-gray-800 transition shadow-xl"
+									>
+										<SparklesSolid />
+									</div>
+								</AiMenu>
+							{/if}
+						</Tooltip>
+					</div>
+				{/if}
+			</div>
+		</div>
+	</Pane>
+	<NotePanel bind:show={showPanel}>
+		{#if selectedPanel === 'chat'}
+			<Chat
+				bind:show={showPanel}
+				bind:selectedModelId
+				bind:messages
+				bind:note
+				bind:editing
+				bind:streaming
+				bind:stopResponseFlag
+				{editor}
+				{inputElement}
+				{selectedContent}
+				{files}
+				onInsert={insertHandler}
+				onStop={stopResponseHandler}
+				{onEdited}
+				insertNoteHandler={() => {
+					insertNoteVersion(note);
 				}}
-				onCloseEmbedded={() => {
-					showNoteChat = false;
+				scrollToBottomHandler={scrollToBottom}
+			/>
+		{:else if selectedPanel === 'settings'}
+			<Controls
+				bind:show={showPanel}
+				bind:selectedModelId
+				bind:files
+				onUpdate={() => {
+					changeDebounceHandler();
 				}}
 			/>
 		{/if}

@@ -1,15 +1,13 @@
 <script lang="ts">
 	import { createEventDispatcher, getContext } from 'svelte';
-	import { WEBUI_API_BASE_URL } from '$lib/constants';
-
 	import { formatFileSize } from '$lib/utils';
-	import { settings } from '$lib/stores';
 
 	import FileItemModal from './FileItemModal.svelte';
 	import GarbageBin from '../icons/GarbageBin.svelte';
 	import Spinner from './Spinner.svelte';
 	import Tooltip from './Tooltip.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
+	import { settings } from '$lib/stores';
 
 	const i18n = getContext('i18n');
 	const dispatch = createEventDispatcher();
@@ -57,16 +55,12 @@
 		: 'rounded-2xl'} text-left"
 	type="button"
 	on:click={async () => {
-		if (item?.file?.data?.content || item?.type === 'file' || item?.content || modal) {
+		if (item?.file?.data?.content || item?.type === 'file' || modal) {
 			showModal = !showModal;
 		} else {
 			if (url) {
 				if (type === 'file') {
-					if (url.startsWith('http')) {
-						window.open(`${url}/content`, '_blank').focus();
-					} else {
-						window.open(`${WEBUI_API_BASE_URL}/files/${url}/content`, '_blank').focus();
-					}
+					window.open(`${url}/content`, '_blank').focus();
 				} else {
 					window.open(`${url}`, '_blank').focus();
 				}
@@ -136,7 +130,7 @@
 
 	{#if !small}
 		<div class="flex flex-col justify-center -space-y-0.5 px-2.5 w-full">
-			<div class=" dark:text-gray-100 text-sm font-normal line-clamp-1 mb-1">
+			<div class=" dark:text-gray-100 text-sm font-medium line-clamp-1 mb-1">
 				{decodeString(name)}
 			</div>
 
@@ -165,7 +159,7 @@
 		<Tooltip content={decodeString(name)} className="flex flex-col w-full" placement="top-start">
 			<div class="flex flex-col justify-center -space-y-0.5 px-1 w-full">
 				<div class=" dark:text-gray-100 text-sm flex justify-between items-center">
-					<div class="font-normal line-clamp-1 flex-1 pr-1">{decodeString(name)}</div>
+					<div class="font-medium line-clamp-1 flex-1 pr-1">{decodeString(name)}</div>
 					{#if size}
 						<div class="text-gray-500 text-xs capitalize shrink-0">{formatFileSize(size)}</div>
 					{:else}

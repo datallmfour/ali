@@ -1,14 +1,15 @@
 <script lang="ts">
+	import { DropdownMenu } from 'bits-ui';
 	import { getContext, onMount, tick } from 'svelte';
 	import { fly } from 'svelte/transition';
+	import { flyAndScale } from '$lib/utils/transitions';
 
-	import { config, user, tools as _tools, mobile, knowledge } from '$lib/stores';
+	import { config, user, tools as _tools, mobile, knowledge, chats } from '$lib/stores';
 	import { getKnowledgeBases } from '$lib/apis/knowledge';
 
 	import { createPicker } from '$lib/utils/google-drive-picker';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
-	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import DocumentArrowUp from '$lib/components/icons/DocumentArrowUp.svelte';
 	import Camera from '$lib/components/icons/Camera.svelte';
@@ -23,7 +24,6 @@
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
 	import PageEdit from '$lib/components/icons/PageEdit.svelte';
 	import Chats from './InputMenu/Chats.svelte';
-	import Files from './InputMenu/Files.svelte';
 	import Notes from './InputMenu/Notes.svelte';
 	import Knowledge from './InputMenu/Knowledge.svelte';
 	import AttachWebpageModal from './AttachWebpageModal.svelte';
@@ -56,9 +56,6 @@
 		fileUploadCapableModels.length === selectedModels.length &&
 		($user?.role === 'admin' || $user?.permissions?.chat?.file_upload);
 
-	let webUploadEnabled = true;
-	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
-
 	$: if (!fileUploadEnabled && files.length > 0) {
 		files = [];
 	}
@@ -75,6 +72,16 @@
 			inputFilesHandler(inputFiles);
 		}
 	};
+
+	const init = async () => {
+		if ($knowledge === null) {
+			await knowledge.set(await getKnowledgeBases(localStorage.token));
+		}
+	};
+
+	$: if (show) {
+		init();
+	}
 
 	const onSelect = (item) => {
 		if (files.find((f) => f.id === item.id)) {
@@ -106,12 +113,11 @@
 	accept="image/*"
 	capture="environment"
 	on:change={handleFileChange}
-	class="hidden"
+	style="display: none;"
 />
 
 <Dropdown
 	bind:show
-	visualViewportAware
 	on:change={(e) => {
 		if (e.detail === false) {
 			onClose();
@@ -123,12 +129,16 @@
 	</Tooltip>
 
 	<div slot="content">
-		<DropdownMenu className="w-70 max-h-72 overflow-hidden transition">
+		<DropdownMenu.Content
+			class="w-full max-w-70 rounded-2xl px-1 py-1  border border-gray-100  dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg max-h-72 overflow-y-auto overflow-x-hidden scrollbar-thin transition"
+			sideOffset={4}
+			alignOffset={-6}
+			side="bottom"
+			align="start"
+			transition={flyAndScale}
+		>
 			{#if tab === ''}
-				<div
-					class="max-h-72 overflow-y-auto overflow-x-hidden scrollbar-thin"
-					in:fly={{ x: -20, duration: 150 }}
-				>
+				<div in:fly={{ x: -20, duration: 150 }}>
 					<Tooltip
 						content={fileUploadCapableModels.length !== selectedModels.length
 							? $i18n.t('Model(s) do not support file upload')
@@ -137,22 +147,20 @@
 								: ''}
 						className="w-full"
 					>
-						<button
-							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
+						<DropdownMenu.Item
+							class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
 								? 'opacity-50'
 								: ''}"
-							type="button"
 							on:click={() => {
 								if (fileUploadEnabled) {
 									uploadFilesHandler();
-									show = false;
 								}
 							}}
 						>
 							<Clip />
 
 							<div class="line-clamp-1">{$i18n.t('Upload Files')}</div>
-						</button>
+						</DropdownMenu.Item>
 					</Tooltip>
 
 					<Tooltip
@@ -163,11 +171,10 @@
 								: ''}
 						className="w-full"
 					>
-						<button
-							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
+						<DropdownMenu.Item
+							class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50  rounded-xl {!fileUploadEnabled
 								? 'opacity-50'
 								: ''}"
-							type="button"
 							on:click={() => {
 								if (fileUploadEnabled) {
 									if (!detectMobile()) {
@@ -179,36 +186,12 @@
 											cameraInputElement.click();
 										}
 									}
-									show = false;
 								}
 							}}
 						>
 							<Camera />
 							<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
-						</button>
-					</Tooltip>
-
-					<Tooltip
-						content={!webUploadEnabled
-							? $i18n.t('You do not have permission to upload web content.')
-							: ''}
-						className="w-full"
-					>
-						<button
-							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!webUploadEnabled
-								? 'opacity-50'
-								: ''}"
-							type="button"
-							on:click={() => {
-								if (webUploadEnabled) {
-									showAttachWebpageModal = true;
-									show = false;
-								}
-							}}
-						>
-							<GlobeAlt />
-							<div class="line-clamp-1">{$i18n.t('Attach Webpage')}</div>
-						</button>
+						</DropdownMenu.Item>
 					</Tooltip>
 
 					<Tooltip
@@ -219,28 +202,19 @@
 								: ''}
 						className="w-full"
 					>
-						<button
-							class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
+						<DropdownMenu.Item
+							class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl {!fileUploadEnabled
 								? 'opacity-50'
 								: ''}"
 							on:click={() => {
 								if (fileUploadEnabled) {
-									tab = 'files';
+									showAttachWebpageModal = true;
 								}
 							}}
 						>
-							<DocumentArrowUp />
-
-							<div class="flex items-center w-full justify-between">
-								<div class="line-clamp-1">
-									{$i18n.t('Attach Files')}
-								</div>
-
-								<div class="text-gray-500">
-									<ChevronRight />
-								</div>
-							</div>
-						</button>
+							<GlobeAlt />
+							<div class="line-clamp-1">{$i18n.t('Attach Webpage')}</div>
+						</DropdownMenu.Item>
 					</Tooltip>
 
 					{#if $config?.features?.enable_notes ?? false}
@@ -253,7 +227,7 @@
 							className="w-full"
 						>
 							<button
-								class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
+								class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
 									? 'opacity-50'
 									: ''}"
 								on:click={() => {
@@ -275,81 +249,79 @@
 						</Tooltip>
 					{/if}
 
-					<Tooltip
-						content={fileUploadCapableModels.length !== selectedModels.length
-							? $i18n.t('Model(s) do not support file upload')
-							: !fileUploadEnabled
-								? $i18n.t('You do not have permission to upload files.')
-								: ''}
-						className="w-full"
-					>
-						<button
-							class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[13px] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
-								? 'opacity-50'
-								: ''}"
-							on:click={() => {
-								tab = 'knowledge';
-							}}
+					{#if ($knowledge ?? []).length > 0}
+						<Tooltip
+							content={fileUploadCapableModels.length !== selectedModels.length
+								? $i18n.t('Model(s) do not support file upload')
+								: !fileUploadEnabled
+									? $i18n.t('You do not have permission to upload files.')
+									: ''}
+							className="w-full"
 						>
-							<Database />
+							<button
+								class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
+									? 'opacity-50'
+									: ''}"
+								on:click={() => {
+									tab = 'knowledge';
+								}}
+							>
+								<Database />
 
-							<div class="flex items-center w-full justify-between">
-								<div class=" line-clamp-1">
-									{$i18n.t('Attach Knowledge')}
+								<div class="flex items-center w-full justify-between">
+									<div class=" line-clamp-1">
+										{$i18n.t('Attach Knowledge')}
+									</div>
+
+									<div class="text-gray-500">
+										<ChevronRight />
+									</div>
 								</div>
+							</button>
+						</Tooltip>
+					{/if}
 
-								<div class="text-gray-500">
-									<ChevronRight />
-								</div>
-							</div>
-						</button>
-					</Tooltip>
-
-					<Tooltip
-						content={fileUploadCapableModels.length !== selectedModels.length
-							? $i18n.t('Model(s) do not support file upload')
-							: !fileUploadEnabled
-								? $i18n.t('You do not have permission to upload files.')
-								: ''}
-						className="w-full"
-					>
-						<button
-							class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[13px] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
-								? 'opacity-50'
-								: ''}"
-							on:click={() => {
-								tab = 'chats';
-							}}
+					{#if ($chats ?? []).length > 0}
+						<Tooltip
+							content={fileUploadCapableModels.length !== selectedModels.length
+								? $i18n.t('Model(s) do not support file upload')
+								: !fileUploadEnabled
+									? $i18n.t('You do not have permission to upload files.')
+									: ''}
+							className="w-full"
 						>
-							<ClockRotateRight />
+							<button
+								class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
+									? 'opacity-50'
+									: ''}"
+								on:click={() => {
+									tab = 'chats';
+								}}
+							>
+								<ClockRotateRight />
 
-							<div class="flex items-center w-full justify-between">
-								<div class=" line-clamp-1">
-									{$i18n.t('Reference Chats')}
-								</div>
+								<div class="flex items-center w-full justify-between">
+									<div class=" line-clamp-1">
+										{$i18n.t('Reference Chats')}
+									</div>
 
-								<div class="text-gray-500">
-									<ChevronRight />
+									<div class="text-gray-500">
+										<ChevronRight />
+									</div>
 								</div>
-							</div>
-						</button>
-					</Tooltip>
+							</button>
+						</Tooltip>
+					{/if}
 
 					{#if fileUploadEnabled}
 						{#if $config?.features?.enable_google_drive_integration}
-							<button
-								class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
-								type="button"
+							<DropdownMenu.Item
+								class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl"
 								on:click={() => {
 									uploadGoogleDriveHandler();
-									show = false;
 								}}
 							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 87.3 78"
-									class="size-3.5 shrink-0"
-								>
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 87.3 78" class="w-4">
 									<path
 										d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z"
 										fill="#0066da"
@@ -376,12 +348,12 @@
 									/>
 								</svg>
 								<div class="line-clamp-1">{$i18n.t('Google Drive')}</div>
-							</button>
+							</DropdownMenu.Item>
 						{/if}
 
 						{#if $config?.features?.enable_onedrive_integration && ($config?.features?.enable_onedrive_personal || $config?.features?.enable_onedrive_business)}
 							<button
-								class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
+								class="flex gap-2 w-full items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
 									? 'opacity-50'
 									: ''}"
 								on:click={() => {
@@ -391,7 +363,7 @@
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									viewBox="0 0 32 32"
-									class="size-3.5"
+									class="size-4"
 									fill="none"
 								>
 									<mask
@@ -488,9 +460,9 @@
 					{/if}
 				</div>
 			{:else if tab === 'knowledge'}
-				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
+				<div in:fly={{ x: 20, duration: 150 }}>
 					<button
-						class="flex w-full shrink-0 justify-between gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 						on:click={() => {
 							tab = '';
 						}}
@@ -507,9 +479,9 @@
 					<Knowledge {onSelect} />
 				</div>
 			{:else if tab === 'notes'}
-				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
+				<div in:fly={{ x: 20, duration: 150 }}>
 					<button
-						class="flex w-full shrink-0 justify-between gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 						on:click={() => {
 							tab = '';
 						}}
@@ -525,29 +497,10 @@
 
 					<Notes {onSelect} />
 				</div>
-			{:else if tab === 'files'}
-				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
-					<button
-						class="flex w-full shrink-0 justify-between gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-						on:click={() => {
-							tab = '';
-						}}
-					>
-						<ChevronLeft />
-
-						<div class="flex items-center w-full justify-between">
-							<div>
-								{$i18n.t('Files')}
-							</div>
-						</div>
-					</button>
-
-					<Files {onSelect} />
-				</div>
 			{:else if tab === 'chats'}
-				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
+				<div in:fly={{ x: 20, duration: 150 }}>
 					<button
-						class="flex w-full shrink-0 justify-between gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 						on:click={() => {
 							tab = '';
 						}}
@@ -566,7 +519,7 @@
 			{:else if tab === 'microsoft_onedrive'}
 				<div in:fly={{ x: 20, duration: 150 }}>
 					<button
-						class="flex w-full justify-between gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 						on:click={() => {
 							tab = '';
 						}}
@@ -581,36 +534,35 @@
 					</button>
 
 					{#if $config?.features?.enable_onedrive_personal}
-						<button
-							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl text-left"
-							type="button"
+						<DropdownMenu.Item
+							class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl text-left"
 							on:click={() => {
 								uploadOneDriveHandler('personal');
-								show = false;
 							}}
 						>
 							<div class="flex flex-col">
 								<div class="line-clamp-1">{$i18n.t('Microsoft OneDrive (personal)')}</div>
 							</div>
-						</button>
+						</DropdownMenu.Item>
 					{/if}
 
 					{#if $config?.features?.enable_onedrive_business}
-						<button
-							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl text-left"
-							type="button"
+						<DropdownMenu.Item
+							class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl text-left"
 							on:click={() => {
 								uploadOneDriveHandler('organizations');
-								show = false;
 							}}
 						>
-							<div class="line-clamp-1">
-								{$i18n.t('Microsoft OneDrive (work/school)')}
+							<div class="flex flex-col">
+								<div class="line-clamp-1">
+									{$i18n.t('Microsoft OneDrive (work/school)')}
+								</div>
+								<div class="text-xs text-gray-500">{$i18n.t('Includes SharePoint')}</div>
 							</div>
-						</button>
+						</DropdownMenu.Item>
 					{/if}
 				</div>
 			{/if}
-		</DropdownMenu>
+		</DropdownMenu.Content>
 	</div>
 </Dropdown>

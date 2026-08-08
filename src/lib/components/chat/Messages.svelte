@@ -1,12 +1,19 @@
 <script lang="ts">
 	import { v4 as uuidv4 } from 'uuid';
-	import { config, settings, user as _user, mobile, temporaryChatEnabled } from '$lib/stores';
-	import { refreshChatList } from '$lib/stores/chatList';
-	import { tick, getContext, onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import {
+		chats,
+		config,
+		settings,
+		user as _user,
+		mobile,
+		currentChatPage,
+		temporaryChatEnabled
+	} from '$lib/stores';
+	import { tick, getContext, onMount, createEventDispatcher } from 'svelte';
 	const dispatch = createEventDispatcher();
 
 	import { toast } from 'svelte-sonner';
-	import { deleteChatMessageById, updateChatById } from '$lib/apis/chats';
+	import { getChatList, updateChatById } from '$lib/apis/chats';
 	import { copyToClipboard, extractCurlyBraceWords } from '$lib/utils';
 
 	import Message from './Messages/Message.svelte';
@@ -17,7 +24,7 @@
 
 	const i18n = getContext('i18n');
 
-	export let className = 'h-full flex pt-18';
+	export let className = 'h-full flex pt-8';
 
 	export let chatId = '';
 	export let user = $_user;
@@ -40,98 +47,45 @@
 	export let showMessage: Function = () => {};
 	export let submitMessage: Function = () => {};
 	export let addMessages: Function = () => {};
-	export let forkHandler: Function | null = null;
 
 	export let readOnly = false;
-	export let allowDelete = true;
-	export let compactPreview = false;
 	export let editCodeBlock = true;
 
 	export let topPadding = false;
 	export let bottomPadding = false;
 	export let autoScroll;
-	export let messagesContainerId = 'messages-container';
 
 	export let onSelect = (e) => {};
-	export let onInsertToNote: ((content: string) => void) | null = null;
 
-	export let messagesCount: number | null = 8;
+	export let messagesCount: number | null = 20;
 	let messagesLoading = false;
-
-	const getMessagesContainer = () => document.getElementById(messagesContainerId);
-
-	onDestroy(() => {
-		cancelAnimationFrame(pendingRebuild);
-	});
 
 	const loadMoreMessages = async () => {
 		// scroll slightly down to disable continuous loading
-		const element = getMessagesContainer();
-		if (element) {
-			element.scrollTop = element.scrollTop + 100;
-		}
+		const element = document.getElementById('messages-container');
+		element.scrollTop = element.scrollTop + 100;
 
 		messagesLoading = true;
-		messagesCount += 8;
-
-		buildMessages();
+		messagesCount += 20;
 
 		await tick();
 
 		messagesLoading = false;
 	};
 
-	let pendingRebuild = null;
-	let lastCurrentId = null;
-
-	const buildMessages = () => {
+	$: if (history.currentId) {
 		let _messages = [];
 
 		let message = history.messages[history.currentId];
-		const visitedMessageIds = new Set();
-
-		while (message && (messagesCount !== null ? _messages.length < messagesCount : true)) {
-			if (visitedMessageIds.has(message.id)) {
-				console.warn('Circular dependency detected in message history', message.id);
-				break;
-			}
-			visitedMessageIds.add(message.id);
-
-			_messages.push(message);
+		while (message && (messagesCount !== null ? _messages.length <= messagesCount : true)) {
+			_messages.unshift({ ...message });
 			message = message.parentId !== null ? history.messages[message.parentId] : null;
 		}
 
-		messages = _messages.reverse();
-	};
-
-	// Throttle message list rebuilds to once per animation frame during streaming.
-	// Structural changes (currentId change) always rebuild immediately.
-	const handleHistoryChange = (currentId, _messages) => {
-		if (!currentId) {
-			messages = [];
-			return;
-		}
-
-		const currentIdChanged = currentId !== lastCurrentId;
-		lastCurrentId = currentId;
-
-		if (currentIdChanged) {
-			// Structural change: new chat, navigation, new message — rebuild immediately
-			cancelAnimationFrame(pendingRebuild);
-			pendingRebuild = null;
-			buildMessages();
-		} else if (_messages) {
-			// Content update (streaming) — throttle to once per frame
-			if (!pendingRebuild) {
-				pendingRebuild = requestAnimationFrame(() => {
-					pendingRebuild = null;
-					buildMessages();
-				});
-			}
-		}
-	};
-
-	$: handleHistoryChange(history.currentId, history.messages);
+		messages = _messages;
+	} else {
+		messages = [];
+	}
 
 	$: if (autoScroll && bottomPadding) {
 		(async () => {
@@ -141,51 +95,21 @@
 	}
 
 	const scrollToBottom = () => {
-		const element = getMessagesContainer();
-		if (element) {
-			element.scrollTop = element.scrollHeight;
-
-			// Follow-up scroll to account for content-visibility: auto re-layouts
-			requestAnimationFrame(() => {
-				if (element) {
-					element.scrollTop = element.scrollHeight;
-				}
-			});
-		}
-	};
-
-	export const scrollToTop = async () => {
-		messagesCount = null;
-		buildMessages();
-		await tick();
-		if (messages.length > 0) {
-			const firstMessageEl = document.getElementById(`message-${messages[0].id}`);
-			if (firstMessageEl) {
-				firstMessageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-			}
-		}
+		const element = document.getElementById('messages-container');
+		element.scrollTop = element.scrollHeight;
 	};
 
 	const updateChat = async () => {
 		if (!$temporaryChatEnabled) {
 			history = history;
 			await tick();
-			const res = await updateChatById(localStorage.token, chatId, {
+			await updateChatById(localStorage.token, chatId, {
 				history: history,
 				messages: messages
 			});
 
-			// Keep local plain-content edits aligned with the saved chat response.
-			if (res?.chat?.history?.messages) {
-				for (const [id, msg] of Object.entries(res.chat.history.messages)) {
-					if (history.messages[id] && (msg as any).content) {
-						history.messages[id].content = (msg as any).content;
-					}
-				}
-				history = history;
-			}
-
-			await refreshChatList(localStorage.token);
+			currentChatPage.set(1);
+			await chats.set(await getChatList(localStorage.token, $currentChatPage));
 		}
 	};
 
@@ -221,10 +145,8 @@
 
 		// Optional auto-scroll
 		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = getMessagesContainer();
-			autoScroll = element
-				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
-				: false;
+			const element = document.getElementById('messages-container');
+			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
 
 			setTimeout(() => {
 				scrollToBottom();
@@ -270,10 +192,8 @@
 		await tick();
 
 		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = getMessagesContainer();
-			autoScroll = element
-				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
-				: false;
+			const element = document.getElementById('messages-container');
+			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
 
 			setTimeout(() => {
 				scrollToBottom();
@@ -323,10 +243,8 @@
 		await tick();
 
 		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = getMessagesContainer();
-			autoScroll = element
-				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
-				: false;
+			const element = document.getElementById('messages-container');
+			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
 
 			setTimeout(() => {
 				scrollToBottom();
@@ -343,7 +261,7 @@
 		await updateChat();
 	};
 
-	const editMessage = async (messageId, { content, files, output = undefined }, submit = true) => {
+	const editMessage = async (messageId, { content, files }, submit = true) => {
 		if ((selectedModels ?? []).filter((id) => id).length === 0) {
 			toast.error($i18n.t('Model not selected'));
 			return;
@@ -387,7 +305,7 @@
 			}
 		} else {
 			if (submit) {
-				// New response message (Save As Copy)
+				// New response message
 				const responseMessageId = uuidv4();
 				const message = history.messages[messageId];
 				const parentId = message.parentId;
@@ -398,8 +316,7 @@
 					parentId: parentId,
 					childrenIds: [],
 					files: undefined,
-					content: output !== undefined ? '' : content,
-					...(output !== undefined ? { output } : {}),
+					content: content,
 					timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 				};
 
@@ -417,14 +334,8 @@
 				await updateChat();
 			} else {
 				// Edit response message
-				if (content !== undefined) {
-					history.messages[messageId].originalContent = history.messages[messageId].content;
-					history.messages[messageId].content = content;
-				}
-				if (output !== undefined) {
-					history.messages[messageId].output = output;
-					history.messages[messageId].content = '';
-				}
+				history.messages[messageId].originalContent = history.messages[messageId].content;
+				history.messages[messageId].content = content;
 				await updateChat();
 			}
 		}
@@ -435,10 +346,6 @@
 	};
 
 	const saveMessage = async (messageId, message) => {
-		if (!history.messages?.[messageId]) {
-			return;
-		}
-
 		history.messages[messageId] = message;
 		await updateChat();
 	};
@@ -473,37 +380,21 @@
 			delete history.messages[id];
 		});
 
-		let nextMessageId = parentMessageId;
-		let nextChildrenIds =
-			nextMessageId === null
-				? Object.keys(history.messages).filter((id) => history.messages[id].parentId === null)
-				: (history.messages[nextMessageId]?.childrenIds ?? []);
-		while (nextChildrenIds.length > 0) {
-			nextMessageId = nextChildrenIds.at(-1);
-			nextChildrenIds = history.messages[nextMessageId]?.childrenIds ?? [];
-		}
-		history.currentId = nextMessageId;
-		history = history;
+		await tick();
 
-		if (!$temporaryChatEnabled) {
-			const res = await deleteChatMessageById(localStorage.token, chatId, messageId);
-			if (res?.chat?.history) {
-				history = res.chat.history;
-			}
+		showMessage({ id: parentMessageId });
 
-			await refreshChatList(localStorage.token);
-		}
+		// Update the chat
+		await updateChat();
 	};
 
 	const triggerScroll = () => {
 		if (autoScroll) {
-			const element = getMessagesContainer();
-			if (element) {
-				autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
-				setTimeout(() => {
-					scrollToBottom();
-				}, 100);
-			}
+			const element = document.getElementById('messages-container');
+			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
+			setTimeout(() => {
+				scrollToBottom();
+			}, 100);
 		}
 	};
 </script>
@@ -555,14 +446,10 @@
 								{continueResponse}
 								{mergeResponses}
 								{addMessages}
-								{forkHandler}
-								{allowDelete}
 								{triggerScroll}
 								{readOnly}
-								{compactPreview}
 								{editCodeBlock}
 								{topPadding}
-								{onInsertToNote}
 							/>
 						{/each}
 					</ul>

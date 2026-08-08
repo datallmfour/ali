@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { copyToClipboard, unescapeHtml } from '$lib/utils';
 	import { toast } from 'svelte-sonner';
+	import { fade } from 'svelte/transition';
 
 	import { getContext } from 'svelte';
 
@@ -12,10 +13,21 @@
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-<code
-	class="codespan cursor-pointer {!done ? 'fade-in-token' : ''}"
-	on:click={() => {
-		copyToClipboard(unescapeHtml(token.text));
-		toast.success($i18n.t('Copied to clipboard'));
-	}}>{unescapeHtml(token.text)}</code
->
+{#if done}
+	<code
+		class="codespan cursor-pointer"
+		on:click={() => {
+			copyToClipboard(unescapeHtml(token.text));
+			toast.success($i18n.t('Copied to clipboard'));
+		}}>{unescapeHtml(token.text)}</code
+	>
+{:else}
+	<code
+		transition:fade={{ duration: 100 }}
+		class="codespan cursor-pointer"
+		on:click={() => {
+			copyToClipboard(unescapeHtml(token.text));
+			toast.success($i18n.t('Copied to clipboard'));
+		}}>{unescapeHtml(token.text)}</code
+	>
+{/if}
