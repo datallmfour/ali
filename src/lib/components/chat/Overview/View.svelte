@@ -1,43 +1,37 @@
 <script lang="ts">
+	import { getContext, createEventDispatcher, onDestroy } from 'svelte';
+	import { useSvelteFlow, useNodesInitialized, useStore } from '@xyflow/svelte';
+
+	const dispatch = createEventDispatcher();
+	const i18n = getContext('i18n');
+
 	import { onMount, tick } from 'svelte';
-	import {
-		useSvelteFlow,
-		useNodesInitialized,
-		useStore,
-		type Edge,
-		type Node
-	} from '@xyflow/svelte';
 
 	import { writable } from 'svelte/store';
-	import { models, user } from '$lib/stores';
+	import { models, showOverview, theme, user } from '$lib/stores';
 
 	import '@xyflow/svelte/dist/style.css';
 
 	import CustomNode from './Node.svelte';
 	import Flow from './Flow.svelte';
+	import XMark from '../../icons/XMark.svelte';
+	import ArrowLeft from '../../icons/ArrowLeft.svelte';
 
 	const { width, height } = useStore();
 
-	const { fitView } = useSvelteFlow();
+	const { fitView, getViewport } = useSvelteFlow();
 	const nodesInitialized = useNodesInitialized();
 
 	export let history;
+	export let onClose;
 	export let onNodeClick;
 
-	type LayoutDirection = 'vertical' | 'horizontal';
-	type PositionMapEntry = {
-		id: string;
-		level: number;
-		position: number;
-	};
+	let selectedMessageId = null;
 
-	let selectedMessageId: string | null = null;
-	let pinned = false;
+	const nodes = writable([]);
+	const edges = writable([]);
 
-	const nodes = writable<Node[]>([]);
-	const edges = writable<Edge[]>([]);
-
-	let layoutDirection: LayoutDirection = 'vertical';
+	let layoutDirection = 'vertical';
 
 	const nodeTypes = {
 		custom: CustomNode
@@ -47,7 +41,7 @@
 		drawFlow(layoutDirection);
 	}
 
-	$: if (history && history.currentId && !pinned) {
+	$: if (history && history.currentId) {
 		focusNode();
 	}
 
@@ -61,22 +55,26 @@
 		selectedMessageId = null;
 	};
 
-	const drawFlow = async (direction: LayoutDirection) => {
-		const nodeList: Node[] = [];
-		const edgeList: Edge[] = [];
+	const drawFlow = async (direction) => {
+		const nodeList = [];
+		const edgeList = [];
 		const levelOffset = direction === 'vertical' ? 150 : 300;
 		const siblingOffset = direction === 'vertical' ? 250 : 150;
 
 		// Map to keep track of node positions at each level
-		let positionMap = new Map<string, PositionMapEntry>();
+		let positionMap = new Map();
+
+		// Helper function to truncate labels
+		function createLabel(content) {
+			const maxLength = 100;
+			return content.length > maxLength ? content.substr(0, maxLength) + '...' : content;
+		}
 
 		// Create nodes and map children to ensure alignment in width
-		let layerWidths: Record<number, number> = {}; // Track widths of each layer
+		let layerWidths = {}; // Track widths of each layer
 
 		Object.keys(history.messages).forEach((id) => {
 			const message = history.messages[id];
-			if (!message) return;
-
 			const level = message.parentId ? (positionMap.get(message.parentId)?.level ?? -1) + 1 : 0;
 			if (!layerWidths[level]) layerWidths[level] = 0;
 
@@ -90,8 +88,6 @@
 		// Adjust positions based on siblings count to centralize vertical spacing
 		Object.keys(history.messages).forEach((id) => {
 			const pos = positionMap.get(id);
-			if (!pos) return;
-
 			const x = direction === 'vertical' ? pos.position * siblingOffset : pos.level * levelOffset;
 			const y = direction === 'vertical' ? pos.level * levelOffset : pos.position * siblingOffset;
 
@@ -125,15 +121,15 @@
 		await nodes.set([...nodeList]);
 	};
 
-	const recurseCheckChild = (nodeId: string, currentId: string): boolean => {
+	const recurseCheckChild = (nodeId, currentId) => {
 		const node = history.messages[nodeId];
 		return (
 			node.childrenIds &&
-			node.childrenIds.some((id: string) => id === currentId || recurseCheckChild(id, currentId))
+			node.childrenIds.some((id) => id === currentId || recurseCheckChild(id, currentId))
 		);
 	};
 
-	const setLayoutDirection = (direction: LayoutDirection) => {
+	const setLayoutDirection = (direction) => {
 		layoutDirection = direction;
 		drawFlow(layoutDirection);
 	};
@@ -141,49 +137,70 @@
 	onMount(() => {
 		drawFlow(layoutDirection);
 
-		const stopNodesInitialized = nodesInitialized.subscribe(async (initialized) => {
-			if (initialized && !pinned) {
+		nodesInitialized.subscribe(async (initialized) => {
+			if (initialized) {
 				await tick();
-				await fitView({ nodes: [{ id: history.currentId }] });
+				const res = await fitView({ nodes: [{ id: history.currentId }] });
 			}
 		});
-		const stopWidth = width.subscribe((value) => {
-			if (value && !pinned) {
-				fitView({ nodes: [{ id: history.currentId }] });
-			}
-		});
-		const stopHeight = height.subscribe((value) => {
-			if (value && !pinned) {
+
+		width.subscribe((value) => {
+			if (value) {
+				// fitView();
 				fitView({ nodes: [{ id: history.currentId }] });
 			}
 		});
 
-		return () => {
-			console.log('Overview destroyed');
-			stopNodesInitialized();
-			stopWidth();
-			stopHeight();
-			nodes.set([]);
-			edges.set([]);
-		};
+		height.subscribe((value) => {
+			if (value) {
+				// fitView();
+				fitView({ nodes: [{ id: history.currentId }] });
+			}
+		});
+	});
+
+	onDestroy(() => {
+		console.log('Overview destroyed');
+
+		nodes.set([]);
+		edges.set([]);
 	});
 </script>
 
 <div class="w-full h-full relative">
+	<div class=" absolute z-50 w-full flex justify-between dark:text-gray-100 px-4 py-3">
+		<div class="flex items-center gap-2.5">
+			<button
+				class="self-center p-0.5"
+				on:click={() => {
+					showOverview.set(false);
+				}}
+			>
+				<ArrowLeft className="size-3.5" />
+			</button>
+			<div class=" text-lg font-medium self-center font-primary">{$i18n.t('Chat Overview')}</div>
+		</div>
+		<button
+			class="self-center p-0.5"
+			on:click={() => {
+				onClose();
+				showOverview.set(false);
+			}}
+		>
+			<XMark className="size-3.5" />
+		</button>
+	</div>
+
 	{#if $nodes.length > 0}
 		<Flow
 			{nodes}
 			{nodeTypes}
 			{edges}
 			{setLayoutDirection}
-			bind:pinned
 			on:nodeclick={(e) => {
 				onNodeClick(e.detail);
-				const clickedMessageId = e.detail.node.data.message.id as string;
-				selectedMessageId = clickedMessageId;
-				if (!pinned) {
-					fitView({ nodes: [{ id: clickedMessageId }] });
-				}
+				selectedMessageId = e.detail.node.data.message.id;
+				fitView({ nodes: [{ id: selectedMessageId }] });
 			}}
 		/>
 	{/if}

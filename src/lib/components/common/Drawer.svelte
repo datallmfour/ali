@@ -41,7 +41,6 @@
 	}
 
 	onDestroy(() => {
-		window.removeEventListener('keydown', handleKeyDown);
 		show = false;
 		if (modalElement) {
 			if (document.body.contains(modalElement)) {

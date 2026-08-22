@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { DropdownMenu } from 'bits-ui';
+	import { flyAndScale } from '$lib/utils/transitions';
 	import { getContext } from 'svelte';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
-	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import LineSpace from '$lib/components/icons/LineSpace.svelte';
 	import LineSpaceSmaller from '$lib/components/icons/LineSpaceSmaller.svelte';
 
@@ -17,23 +18,28 @@
 
 <Dropdown
 	bind:show
-	onOpenChange={(state) => {
-		if (state === false) {
+	on:change={(e) => {
+		if (e.detail === false) {
 			onClose();
 		}
 	}}
-	align="start"
-	sideOffset={-2}
+	align="end"
 >
 	<slot></slot>
 
 	<div slot="content">
-		<DropdownMenu className="max-w-[200px] transition">
-			<div class="py-1 px-2 flex dark:text-gray-100">
+		<DropdownMenu.Content
+			class="w-full max-w-[200px] rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg transition"
+			sideOffset={-2}
+			side="bottom"
+			align="start"
+			transition={flyAndScale}
+		>
+			<div class="py-1.5 px-2.5 flex dark:text-gray-100">
 				<input
 					type="text"
 					id="floating-message-input"
-					class="bg-transparent outline-hidden w-full flex-1 text-[13px]"
+					class="bg-transparent outline-hidden w-full flex-1 text-sm"
 					placeholder={$i18n.t('Suggest a change')}
 					bind:value={inputValue}
 					autocomplete="off"
@@ -47,7 +53,6 @@
 
 				<div class="ml-2 self-center flex items-center">
 					<button
-						aria-label={$i18n.t('Submit suggestion')}
 						class="{inputValue !== ''
 							? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
 							: 'text-white bg-gray-200 dark:text-gray-900 dark:bg-gray-700 disabled'} transition rounded-full p-1 self-center"
@@ -71,9 +76,9 @@
 					</button>
 				</div>
 			</div>
-			<hr class="border-gray-50/30 dark:border-gray-800/30 my-0.5 mx-1" />
-			<button
-				class="select-none flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+			<hr class="border-gray-50/30 dark:border-gray-800/30 my-1 mx-2" />
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
 				on:click={() => {
 					onRegenerate();
 					show = false;
@@ -86,7 +91,7 @@
 					stroke-width="2"
 					aria-hidden="true"
 					stroke="currentColor"
-					class="size-3.5"
+					class="w-4 h-4"
 				>
 					<path
 						stroke-linecap="round"
@@ -95,27 +100,27 @@
 					/>
 				</svg>
 				<div class="flex items-center">{$i18n.t('Try Again')}</div>
-			</button>
+			</DropdownMenu.Item>
 
-			<button
-				class="select-none flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
 				on:click={() => {
 					onRegenerate($i18n.t('Add Details'));
 				}}
 			>
-				<LineSpace className="size-3.5" strokeWidth="2" />
+				<LineSpace strokeWidth="2" />
 				<div class="flex items-center">{$i18n.t('Add Details')}</div>
-			</button>
+			</DropdownMenu.Item>
 
-			<button
-				class="select-none flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+			<DropdownMenu.Item
+				class="flex  gap-2  items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
 				on:click={() => {
 					onRegenerate($i18n.t('More Concise'));
 				}}
 			>
-				<LineSpaceSmaller className="size-3.5" strokeWidth="2" />
+				<LineSpaceSmaller strokeWidth="2" />
 				<div class="flex items-center">{$i18n.t('More Concise')}</div>
-			</button>
-		</DropdownMenu>
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
 	</div>
 </Dropdown>

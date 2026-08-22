@@ -88,10 +88,6 @@
 						} finally {
 							draggedOver = false;
 						}
-
-						// Only process the first non-file item; all share the same
-						// text/plain payload, so continuing would duplicate the drop.
-						break;
 					}
 				}
 			}
@@ -156,7 +152,7 @@
 					id="sidebar-folder-button"
 					class=" w-full group rounded-xl relative flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-900 transition {buttonClassName}"
 				>
-					<button class="w-full py-1.5 pl-2 flex items-center gap-1.5 text-xs font-normal">
+					<button class="w-full py-1.5 pl-2 flex items-center gap-1.5 text-xs font-medium">
 						{#if chevron}
 							<div class=" p-[1px]">
 								{#if open}

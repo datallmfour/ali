@@ -37,7 +37,7 @@
 			name: data.name,
 			meta: data.meta,
 			content: data.content,
-			access_grants: data.access_grants
+			access_control: data.access_control
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
@@ -56,40 +56,29 @@
 		const id = $page.url.searchParams.get('id');
 
 		if (id) {
-			const res = await getToolById(localStorage.token, id).catch((error) => {
+			tool = await getToolById(localStorage.token, id).catch((error) => {
 				toast.error(`${error}`);
 				goto('/workspace/tools');
 				return null;
 			});
 
-			if (res && !res.write_access) {
-				toast.error($i18n.t('You do not have permission to edit this tool'));
-				goto('/workspace/tools');
-				return;
-			}
-
-			if (res) {
-				tool = res;
-				console.log(tool);
-			}
+			console.log(tool);
 		}
 	});
 </script>
 
 {#if tool}
-	<div class="h-full min-w-0 overflow-x-hidden">
-		<ToolkitEditor
-			edit={true}
-			id={tool.id}
-			name={tool.name}
-			meta={tool.meta}
-			content={tool.content}
-			accessGrants={tool.access_grants ?? []}
-			onSave={(value) => {
-				saveHandler(value);
-			}}
-		/>
-	</div>
+	<ToolkitEditor
+		edit={true}
+		id={tool.id}
+		name={tool.name}
+		meta={tool.meta}
+		content={tool.content}
+		accessControl={tool.access_control}
+		onSave={(value) => {
+			saveHandler(value);
+		}}
+	/>
 {:else}
 	<div class="flex items-center justify-center h-full">
 		<div class=" pb-16">

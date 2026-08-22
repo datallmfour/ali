@@ -9,13 +9,13 @@
 	import { updateChannelById, updateChannelMemberActiveStatusById } from '$lib/apis/channels';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
+	import Cog6 from '$lib/components/icons/Cog6.svelte';
 	import ChannelModal from './ChannelModal.svelte';
+	import Lock from '$lib/components/icons/Lock.svelte';
+	import Hashtag from '$lib/components/icons/Hashtag.svelte';
+	import Users from '$lib/components/icons/Users.svelte';
+	import XMark from '$lib/components/icons/XMark.svelte';
 	import Emoji from '$lib/components/common/Emoji.svelte';
-	import HashtagIcon from '$lib/components/icons/Hashtag.svelte';
-	import LockIcon from '$lib/components/icons/Lock.svelte';
-	import SettingsIcon from '$lib/components/icons/Settings.svelte';
-	import UserIcon from './icons/User.svelte';
-	import XMarkIcon from './icons/XMark.svelte';
 
 	export let onUpdate: Function = () => {};
 
@@ -25,25 +25,6 @@
 	let showEditChannelModal = false;
 
 	let itemElement;
-
-	const hasPublicReadGrant = (grants: any) =>
-		Array.isArray(grants) &&
-		grants.some(
-			(grant) =>
-				grant?.principal_type === 'user' &&
-				grant?.principal_id === '*' &&
-				grant?.permission === 'read'
-		);
-
-	const isPublicChannel = (channel: any): boolean => {
-		if (channel?.type === 'group') {
-			if (typeof channel?.is_private === 'boolean') {
-				return !channel.is_private;
-			}
-			return hasPublicReadGrant(channel?.access_grants);
-		}
-		return hasPublicReadGrant(channel?.access_grants);
-	};
 </script>
 
 <ChannelModal
@@ -51,12 +32,11 @@
 	{channel}
 	edit={true}
 	{onUpdate}
-	onSubmit={async (payload: any) => {
-		const { name, is_private, access_grants, group_ids, user_ids } = payload ?? {};
+	onSubmit={async ({ name, is_private, access_control, group_ids, user_ids }) => {
 		const res = await updateChannelById(localStorage.token, channel.id, {
 			name,
 			is_private,
-			access_grants,
+			access_control,
 			group_ids,
 			user_ids
 		}).catch((error) => {
@@ -78,7 +58,7 @@
 		.url.pathname === `/channels/${channel.id}`
 		? 'bg-gray-100 dark:bg-gray-900 selected'
 		: ''} {channel?.type === 'dm' ? 'px-1 py-[3px]' : 'p-1'}  {channel?.unread_count > 0
-		? 'font-normal dark:text-white text-black'
+		? 'font-medium dark:text-white text-black'
 		: ' dark:text-gray-400 text-gray-600'} cursor-pointer select-none"
 >
 	<a
@@ -139,14 +119,14 @@
 							{/if}
 						</div>
 					{:else}
-						<UserIcon className="size-4 ml-1 mr-0.5" strokeWidth="1.5" />
+						<Users className="size-4 ml-1 mr-0.5" strokeWidth="2" />
 					{/if}
 				{:else}
 					<div class=" size-4 justify-center flex items-center ml-1">
-						{#if isPublicChannel(channel)}
-							<HashtagIcon className="size-3" strokeWidth="1.8" />
+						{#if channel?.type === 'group' ? !channel?.is_private : channel?.access_control === null}
+							<Hashtag className="size-3.5" strokeWidth="2.5" />
 						{:else}
-							<LockIcon className="size-3.5" strokeWidth="1.7" />
+							<Lock className="size-[15px]" strokeWidth="2" />
 						{/if}
 					</div>
 				{/if}
@@ -156,11 +136,11 @@
 				class=" text-left self-center overflow-hidden w-full line-clamp-1 flex-1 pr-1 flex items-center gap-2.5"
 			>
 				{#if channel?.name}
-					<span class="line-clamp-1">
+					<span>
 						{channel.name}
 					</span>
 				{:else}
-					<span class="shrink-0 line-clamp-1">
+					<span class="shrink-0">
 						{channel?.users
 							?.filter((u) => u.id !== $user?.id)
 							.map((u) => u.name)
@@ -171,7 +151,7 @@
 						{@const dmUser = channel.users.find((u) => u.id !== $user?.id)}
 
 						{#if dmUser?.status_emoji || dmUser?.status_message}
-							<span class="flex gap-1.5 line-clamp-1">
+							<span class="flex gap-1.5">
 								{#if dmUser?.status_emoji}
 									<div class=" self-center shrink-0">
 										<Emoji className="size-3.5" shortCode={dmUser?.status_emoji} />
@@ -191,7 +171,7 @@
 		<div class="flex items-center">
 			{#if channel?.unread_count > 0}
 				<div
-					class="text-xs py-[1px] px-2 rounded-xl bg-gray-100 text-black dark:bg-gray-800 dark:text-white font-normal whitespace-nowrap"
+					class="text-xs py-[1px] px-2 rounded-xl bg-gray-100 text-black dark:bg-gray-800 dark:text-white font-medium"
 				>
 					{new Intl.NumberFormat($i18n.locale, {
 						notation: 'compact',
@@ -226,7 +206,7 @@
 					);
 				}}
 			>
-				<XMarkIcon className="size-3.5" />
+				<XMark className="size-3.5" />
 			</button>
 		</div>
 	{:else if $user?.role === 'admin' || channel.user_id === $user?.id}
@@ -242,7 +222,7 @@
 					showEditChannelModal = true;
 				}}
 			>
-				<SettingsIcon className="size-3.5" strokeWidth="1.5" />
+				<Cog6 className="size-3.5" />
 			</button>
 		</div>
 	{/if}

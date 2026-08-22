@@ -26,17 +26,13 @@
 </script>
 
 <div>
-	<div class="mb-1.5 text-xs text-gray-400 dark:text-gray-600">{$i18n.t('Default Features')}</div>
-	<div class="grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+	<div class="flex w-full justify-between mb-1">
+		<div class=" self-center text-xs font-medium text-gray-500">{$i18n.t('Default Features')}</div>
+	</div>
+	<div class="flex items-center mt-2 flex-wrap">
 		{#each availableFeatures as feature}
-			<div class="flex min-h-6 items-center justify-between gap-2.5">
-				<div class="min-w-0 text-xs text-gray-600 dark:text-gray-400">
-					<Tooltip content={marked.parse(featureLabels[feature].description)}>
-						<span class="truncate">{$i18n.t(featureLabels[feature].label)}</span>
-					</Tooltip>
-				</div>
+			<div class=" flex items-center gap-2 mr-3">
 				<Checkbox
-					ariaLabel={$i18n.t(featureLabels[feature].label)}
 					state={featureIds.includes(feature) ? 'checked' : 'unchecked'}
 					on:change={(e) => {
 						if (e.detail === 'checked') {
@@ -46,6 +42,12 @@
 						}
 					}}
 				/>
+
+				<div class=" py-0.5 text-sm capitalize">
+					<Tooltip content={marked.parse(featureLabels[feature].description)}>
+						{$i18n.t(featureLabels[feature].label)}
+					</Tooltip>
+				</div>
 			</div>
 		{/each}
 	</div>

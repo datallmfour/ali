@@ -61,11 +61,6 @@
 	};
 
 	onMount(() => {
-		if (!$config?.features?.enable_plugins) {
-			goto('/admin', { replaceState: true });
-			return;
-		}
-
 		window.addEventListener('message', async (event) => {
 			if (
 				!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:9999'].includes(
@@ -96,7 +91,7 @@
 
 {#if mounted}
 	{#key func?.content}
-		<div class="px-[16px] h-full min-w-0 overflow-x-hidden">
+		<div class="px-[16px] h-full">
 			<FunctionEditor
 				id={func?.id ?? ''}
 				name={func?.name ?? ''}

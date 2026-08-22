@@ -1,42 +1,48 @@
-from __future__ import annotations
-
 import logging
+from typing import Optional
 
+import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
-from open_webui.utils.session_pool import get_session
+from open_webui.env import SRC_LOG_LEVELS
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 
-async def search_serpstack(
+def search_serpstack(
     api_key: str,
     query: str,
     count: int,
-    filter_list: list[str | None] | None = None,
+    filter_list: Optional[list[str]] = None,
     https_enabled: bool = True,
 ) -> list[SearchResult]:
-    """Query the serpstack.com API and return normalised results.
+    """Search using serpstack.com's and return the results as a list of SearchResult objects.
 
-    Uses HTTPS by default; set ``https_enabled=False`` for free-tier HTTP access.
+    Args:
+        api_key (str): A serpstack.com API key
+        query (str): The query to search for
+        https_enabled (bool): Whether to use HTTPS or HTTP for the API request
     """
-    scheme = 'https' if https_enabled else 'http'
-    url = f'{scheme}://api.serpstack.com/search'
-    params = {'access_key': api_key, 'query': query}
+    url = f"{'https' if https_enabled else 'http'}://api.serpstack.com/search"
 
-    session = await get_session()
-    async with session.get(url, params=params) as response:
-        response.raise_for_status()
-        payload = await response.json()
+    headers = {"Content-Type": "application/json"}
+    params = {
+        "access_key": api_key,
+        "query": query,
+    }
 
-    organic = sorted(payload.get('organic_results', []), key=lambda x: x.get('position', 0))
+    response = requests.request("POST", url, headers=headers, params=params)
+    response.raise_for_status()
+
+    json_response = response.json()
+    results = sorted(
+        json_response.get("organic_results", []), key=lambda x: x.get("position", 0)
+    )
     if filter_list:
-        organic = get_filtered_results(organic, filter_list)
-
+        results = get_filtered_results(results, filter_list)
     return [
         SearchResult(
-            link=item.get('url', ''),
-            title=item.get('title'),
-            snippet=item.get('snippet'),
+            link=result["url"], title=result.get("title"), snippet=result.get("snippet")
         )
-        for item in organic[:count]
+        for result in results[:count]
     ]

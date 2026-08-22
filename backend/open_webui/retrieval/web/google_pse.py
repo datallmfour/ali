@@ -1,66 +1,74 @@
-from __future__ import annotations
-
 import logging
+from typing import Optional
 
+import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
-from open_webui.utils.session_pool import get_session
+from open_webui.env import SRC_LOG_LEVELS
 
 log = logging.getLogger(__name__)
+log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 
-async def search_google_pse(
+def search_google_pse(
     api_key: str,
     search_engine_id: str,
     query: str,
     count: int,
-    filter_list: list[str | None] | None = None,
-    referer: str | None = None,
+    filter_list: Optional[list[str]] = None,
+    referer: Optional[str] = None,
 ) -> list[SearchResult]:
-    """Query Google Programmable Search Engine with automatic pagination.
+    """Search using Google's Programmable Search Engine API and return the results as a list of SearchResult objects.
+    Handles pagination for counts greater than 10.
 
-    The PSE API returns at most 10 results per request, so this function
-    issues multiple requests when ``count > 10``.
+    Args:
+        api_key (str): A Programmable Search Engine API key
+        search_engine_id (str): A Programmable Search Engine ID
+        query (str): The query to search for
+        count (int): The number of results to return (max 100, as PSE max results per query is 10 and max page is 10)
+        filter_list (Optional[list[str]], optional): A list of keywords to filter out from results. Defaults to None.
+
+    Returns:
+        list[SearchResult]: A list of SearchResult objects.
     """
-    url = 'https://www.googleapis.com/customsearch/v1'
-    headers: dict[str, str] = {'Content-Type': 'application/json'}
+    url = "https://www.googleapis.com/customsearch/v1"
+
+    headers = {"Content-Type": "application/json"}
     if referer:
-        headers['Referer'] = referer
+        headers["Referer"] = referer
 
-    all_items: list[dict] = []
-    start_index = 1  # PSE uses 1-based pagination
+    all_results = []
+    start_index = 1  # Google PSE start parameter is 1-based
 
-    session = await get_session()
-    remaining = count
-    while remaining > 0:
-        page_size = min(remaining, 10)
+    while count > 0:
+        num_results_this_page = min(count, 10)  # Google PSE max results per page is 10
         params = {
-            'cx': search_engine_id,
-            'q': query,
-            'key': api_key,
-            'num': str(page_size),
-            'start': str(start_index),
+            "cx": search_engine_id,
+            "q": query,
+            "key": api_key,
+            "num": num_results_this_page,
+            "start": start_index,
         }
-
-        async with session.get(url, headers=headers, params=params) as response:
-            response.raise_for_status()
-            payload = await response.json()
-
-        items = payload.get('items', [])
-        if not items:
-            break
-
-        all_items.extend(items)
-        remaining -= len(items)
-        start_index += 10
+        response = requests.request("GET", url, headers=headers, params=params)
+        response.raise_for_status()
+        json_response = response.json()
+        results = json_response.get("items", [])
+        if results:  # check if results are returned. If not, no more pages to fetch.
+            all_results.extend(results)
+            count -= len(
+                results
+            )  # Decrement count by the number of results fetched in this page.
+            start_index += 10  # Increment start index for the next page
+        else:
+            break  # No more results from Google PSE, break the loop
 
     if filter_list:
-        all_items = get_filtered_results(all_items, filter_list)
+        all_results = get_filtered_results(all_results, filter_list)
 
     return [
         SearchResult(
-            link=item.get('link', ''),
-            title=item.get('title'),
-            snippet=item.get('snippet'),
+            link=result["link"],
+            title=result.get("title"),
+            snippet=result.get("snippet"),
         )
-        for item in all_items
+        for result in all_results
     ]

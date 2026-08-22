@@ -1,7 +1,7 @@
 <script>
 	import { io } from 'socket.io-client';
 	import { spring } from 'svelte/motion';
-	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
+	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
 	import { Toaster, toast } from 'svelte-sonner';
 
 	let loadingProgress = spring(0, {
@@ -19,8 +19,9 @@
 		WEBUI_DEPLOYMENT_ID,
 		mobile,
 		socket,
-		socketConnected,
 		chatId,
+		chats,
+		currentChatPage,
 		tags,
 		temporaryChatEnabled,
 		isLastActiveTab,
@@ -29,16 +30,8 @@
 		toolServers,
 		playingNotificationSound,
 		channels,
-		channelId,
-		terminalServers,
-		showControls,
-		showFileNavPath,
-		showFileNavDir,
-		pyodideWorker,
-		desktopEvent
+		channelId
 	} from '$lib/stores';
-	import { refreshChatList } from '$lib/stores/chatList';
-	import { getFileContentById } from '$lib/apis/files';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
@@ -50,33 +43,18 @@
 	import '../app.css';
 	import 'tippy.js/dist/tippy.css';
 
-	import { executeToolServer, getBackendConfig, getModels, getVersion } from '$lib/apis';
-	import { getSessionUser, updateUserTimezone, userSignOut } from '$lib/apis/auths';
-	import { getAllTags } from '$lib/apis/chats';
+	import { executeToolServer, getBackendConfig, getVersion } from '$lib/apis';
+	import { getSessionUser, userSignOut } from '$lib/apis/auths';
+	import { getAllTags, getChatList } from '$lib/apis/chats';
 	import { chatCompletion } from '$lib/apis/openai';
-	import { isTemporaryChatId } from '$lib/utils/chatId';
-	import {
-		addOpenAIConnection,
-		removeOpenAIConnection,
-		addTerminalConnection,
-		removeTerminalConnection
-	} from '$lib/utils/connections';
 
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL, WEBUI_HOSTNAME } from '$lib/constants';
-	import {
-		bestMatchingLanguage,
-		cleanText,
-		displayFileHandler,
-		getUserTimezone,
-		removeAllDetails
-	} from '$lib/utils';
+	import { bestMatchingLanguage } from '$lib/utils';
 	import { setTextScale } from '$lib/utils/text-scale';
 
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
 	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
-	import SyncStatsModal from '$lib/components/chat/Settings/SyncStatsModal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
-	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 	import { getUserSettings } from '$lib/apis/users';
 	import dayjs from 'dayjs';
 	import { getChannels } from '$lib/apis/channels';
@@ -109,58 +87,12 @@
 
 	let loaded = false;
 	let tokenTimer = null;
-	let isAuthRedirectInProgress = false;
 
 	let showRefresh = false;
 
-	let showSyncStatsModal = false;
-	let syncStatsEventData = null;
-
 	let heartbeatInterval = null;
-	let disconnectToastTimer = null;
-	let disconnectWarningShown = false;
-	let pageIsVisible = true;
-	let pageWasHidden = false;
-	let lastVisibleAt = Date.now();
-	let disconnectReason = null;
 
 	const BREAKPOINT = 768;
-	const DISCONNECT_TOAST_DELAY_MS = 2000;
-	const RECENT_RESUME_GRACE_MS = 8000;
-	const RESUME_DISCONNECT_REASONS = new Set(['ping timeout', 'transport close', 'transport error']);
-
-	const clearDisconnectToastTimer = () => {
-		if (disconnectToastTimer) {
-			clearTimeout(disconnectToastTimer);
-			disconnectToastTimer = null;
-		}
-	};
-
-	const recentlyResumed = () =>
-		pageWasHidden && Date.now() - lastVisibleAt < RECENT_RESUME_GRACE_MS;
-
-	const isLikelyResumeDisconnect = (reason) => {
-		return (!pageIsVisible || recentlyResumed()) && RESUME_DISCONNECT_REASONS.has(reason);
-	};
-
-	const scheduleDisconnectToast = () => {
-		clearDisconnectToastTimer();
-
-		const resumeDelay = isLikelyResumeDisconnect(disconnectReason)
-			? Math.max(RECENT_RESUME_GRACE_MS - (Date.now() - lastVisibleAt), 0)
-			: 0;
-
-		disconnectToastTimer = setTimeout(() => {
-			disconnectToastTimer = null;
-
-			if ($socket?.connected || !pageIsVisible || isLikelyResumeDisconnect(disconnectReason)) {
-				return;
-			}
-
-			disconnectWarningShown = true;
-			toast.warning($i18n.t('Connection lost. Reconnecting...'));
-		}, resumeDelay + DISCONNECT_TOAST_DELAY_MS);
-	};
 
 	const setupSocket = async (enableWebsocket) => {
 		const _socket = io(`${WEBUI_BASE_URL}` || undefined, {
@@ -178,25 +110,8 @@
 			console.log('connect_error', err);
 		});
 
-		let hasConnectedOnce = false;
-
 		_socket.on('connect', async () => {
 			console.log('connected', _socket.id);
-
-			// Cancel any pending disconnect toast if we reconnected quickly
-			clearDisconnectToastTimer();
-
-			if (hasConnectedOnce) {
-				socketConnected.set(true);
-				// Only show "Reconnected" if the user actually saw the disconnect warning
-				if (disconnectWarningShown) {
-					toast.success($i18n.t('Reconnected'));
-				}
-			}
-			disconnectWarningShown = false;
-			disconnectReason = null;
-			hasConnectedOnce = true;
-
 			const res = await getVersion(localStorage.token);
 
 			const deploymentId = res?.deployment_id ?? null;
@@ -227,7 +142,6 @@
 
 			if (version !== null) {
 				WEBUI_VERSION.set(version);
-				window.WEBUI_VERSION = version;
 			}
 
 			console.log('version', version);
@@ -250,16 +164,6 @@
 
 		_socket.on('disconnect', (reason, details) => {
 			console.log(`Socket ${_socket.id} disconnected due to ${reason}`);
-			socketConnected.set(false);
-			disconnectReason = reason;
-			disconnectWarningShown = false;
-
-			// Delay visible warnings while mobile browsers resume suspended tabs.
-			if (isLikelyResumeDisconnect(reason)) {
-				clearDisconnectToastTimer();
-			} else {
-				scheduleDisconnectToast();
-			}
 
 			if (heartbeatInterval) {
 				clearInterval(heartbeatInterval);
@@ -272,20 +176,7 @@
 		});
 	};
 
-	/**
-	 * Get or create the persistent Pyodide worker.
-	 * The worker persists across executions so the virtual FS (IDBFS) is preserved.
-	 */
-	const getOrCreateWorker = () => {
-		let worker = $pyodideWorker;
-		if (!worker) {
-			worker = createPyodideWorker();
-			pyodideWorker.set(worker);
-		}
-		return worker;
-	};
-
-	const executePythonAsWorker = async (id, code, cb, files = []) => {
+	const executePythonAsWorker = async (id, code, cb) => {
 		let result = null;
 		let stdout = null;
 		let stderr = null;
@@ -307,44 +198,19 @@
 			/\bimport\s+pytz\b|\bfrom\s+pytz\b/.test(code) ? 'pytz' : null
 		].filter(Boolean);
 
-		const worker = getOrCreateWorker();
+		const pyodideWorker = new PyodideWorker();
 
-		// Fetch file content from the server and prepare for the worker
-		let filePayloads = [];
-		if (files && files.length > 0) {
-			for (const file of files) {
-				try {
-					const fileId = file?.id;
-					const fileName = file?.filename || file?.name || 'file';
-					if (fileId) {
-						const content = await getFileContentById(fileId);
-						if (content) {
-							filePayloads.push({ name: fileName, data: content });
-						}
-					}
-				} catch (e) {
-					console.error('Failed to fetch file for Pyodide:', e);
-				}
-			}
-		}
-
-		worker.postMessage({
-			type: 'execute',
+		pyodideWorker.postMessage({
 			id: id,
 			code: code,
-			packages: packages,
-			files: filePayloads.length > 0 ? filePayloads : undefined
+			packages: packages
 		});
 
-		// Timeout for this specific execution (not the worker itself)
-		let timeoutId = setTimeout(() => {
+		setTimeout(() => {
 			if (executing) {
 				executing = false;
 				stderr = 'Execution Time Limit Exceeded';
-
-				// Terminate and recreate the worker on timeout
-				worker.terminate();
-				pyodideWorker.set(null);
+				pyodideWorker.terminate();
 
 				if (cb) {
 					cb(
@@ -363,18 +229,11 @@
 			}
 		}, 60000);
 
-		// Use addEventListener so multiple concurrent executions don't clobber each other
-		const onMessage = (event) => {
-			const { id: eventId, ...data } = event.data;
-			// Only handle responses for this execution ID
-			if (eventId !== id) return;
-			// Ignore FS responses (they use a type field)
-			if (data.type && data.type.startsWith('fs:')) return;
-
+		pyodideWorker.onmessage = (event) => {
 			console.log('pyodideWorker.onmessage', event);
-			clearTimeout(timeoutId);
-			worker.removeEventListener('message', onMessage);
-			worker.removeEventListener('error', onError);
+			const { id, ...data } = event.data;
+
+			console.log(id, data);
 
 			data['stdout'] && (stdout = data['stdout']);
 			data['stderr'] && (stderr = data['stderr']);
@@ -398,11 +257,8 @@
 			executing = false;
 		};
 
-		const onError = (event) => {
+		pyodideWorker.onerror = (event) => {
 			console.log('pyodideWorker.onerror', event);
-			clearTimeout(timeoutId);
-			worker.removeEventListener('message', onMessage);
-			worker.removeEventListener('error', onError);
 
 			if (cb) {
 				cb(
@@ -420,74 +276,48 @@
 			}
 			executing = false;
 		};
-
-		worker.addEventListener('message', onMessage);
-		worker.addEventListener('error', onError);
 	};
 
-	const resolveToolServer = (serverUrl) => {
-		let toolServer = $settings?.toolServers?.find((server) => server.url === serverUrl);
-		if (!toolServer) {
-			const terminalServer = ($settings?.terminalServers ?? []).find(
-				(server) => server.url === serverUrl
-			);
-			if (terminalServer) {
-				toolServer = {
-					url: terminalServer.url,
-					auth_type: terminalServer.auth_type ?? 'bearer',
-					key: terminalServer.key ?? '',
-					path: terminalServer.path ?? '/openapi.json'
-				};
-			}
-		}
-
-		let toolServerData =
-			$toolServers?.find((server) => server.url === serverUrl) ??
-			$terminalServers?.find((server) => server.url === serverUrl);
-
-		let token = null;
-		if (toolServer) {
-			const auth_type = toolServer?.auth_type ?? 'bearer';
-			if (auth_type === 'bearer') token = toolServer?.key;
-			else if (auth_type === 'session') token = localStorage.token;
-		}
-
-		return { toolServer, toolServerData, token };
-	};
-
-	const executeTool = async (data, cb, chatId) => {
-		const { toolServer, toolServerData, token } = resolveToolServer(data.server?.url);
+	const executeTool = async (data, cb) => {
+		const toolServer = $settings?.toolServers?.find((server) => server.url === data.server?.url);
+		const toolServerData = $toolServers?.find((server) => server.url === data.server?.url);
 
 		console.log('executeTool', data, toolServer);
 
 		if (toolServer) {
+			console.log(toolServer);
+
+			let toolServerToken = null;
+			const auth_type = toolServer?.auth_type ?? 'bearer';
+			if (auth_type === 'bearer') {
+				toolServerToken = toolServer?.key;
+			} else if (auth_type === 'none') {
+				// No authentication
+			} else if (auth_type === 'session') {
+				toolServerToken = localStorage.token;
+			}
+
 			const res = await executeToolServer(
-				token,
+				toolServerToken,
 				toolServer.url,
 				data?.name,
 				data?.params,
-				toolServerData,
-				chatId
+				toolServerData
 			);
 
 			console.log('executeToolServer', res);
-
-			if (data?.name === 'display_file' && data?.params?.path) {
-				if (res?.exists !== false) {
-					displayFileHandler(data.params.path, { showControls, showFileNavPath });
-				}
-			}
-
-			if (['write_file'].includes(data?.name) && data?.params?.path) {
-				showFileNavDir.set(res?.path ?? data.params.path);
-			}
-
 			if (cb) {
-				cb(structuredClone(res));
+				cb(JSON.parse(JSON.stringify(res)));
 			}
 		} else {
 			if (cb) {
-				cb({ error: 'Tool Server Not Found' });
+				cb(
+					JSON.parse(
+						JSON.stringify({
+							error: 'Tool Server Not Found'
+						})
+					)
+				);
 			}
 		}
 	};
@@ -495,21 +325,13 @@
 	const chatEventHandler = async (event, cb) => {
 		const chat = $page.url.pathname.includes(`/c/${event.chat_id}`);
 
-		// Skip events from temporary chats that are not the current chat.
-		// This prevents notifications from being sent to other tabs/devices
-		// for privacy, since temporary chats are not meant to be persisted or visible elsewhere.
-		const isTemporaryChat = isTemporaryChatId(event.chat_id);
-		if (isTemporaryChat && event.chat_id !== $chatId) {
-			return;
-		}
-
-		let isInBackground = document.visibilityState !== 'visible';
+		let isFocused = document.visibilityState !== 'visible';
 		if (window.electronAPI) {
 			const res = await window.electronAPI.send({
 				type: 'window:isFocused'
 			});
 			if (res) {
-				isInBackground = !res.isFocused;
+				isFocused = res.isFocused;
 			}
 		}
 
@@ -517,50 +339,55 @@
 		const type = event?.data?.type ?? null;
 		const data = event?.data?.data ?? null;
 
-		// Calendar alerts are not chat-scoped, handle before chat_id checks
-		if (type === 'calendar:alert' && data) {
-			const timeStr =
-				data.minutes_until <= 0
-					? $i18n.t('Starting now')
-					: data.minutes_until === 1
-						? $i18n.t('Starting in 1 minute')
-						: $i18n.t('Starting in {{count}} minutes', { count: data.minutes_until });
+		if ((event.chat_id !== $chatId && !$temporaryChatEnabled) || isFocused) {
+			if (type === 'chat:completion') {
+				const { done, content, title } = data;
 
-			toast.custom(NotificationToast, {
-				componentProps: {
-					onClick: () => {
-						goto('/calendar');
-					},
-					title: data.title,
-					content: timeStr
-				},
-				duration: 30000,
-				unstyled: true
-			});
+				if (done) {
+					if ($settings?.notificationSoundAlways ?? false) {
+						playingNotificationSound.set(true);
 
-			if ($isLastActiveTab) {
-				if ($settings?.notificationEnabled ?? false) {
-					new Notification(`${data.title} / Open WebUI`, {
-						body: timeStr,
-						icon: `${WEBUI_BASE_URL}/static/favicon.png`
+						const audio = new Audio(`/audio/notification.mp3`);
+						audio.play().finally(() => {
+							// Ensure the global state is reset after the sound finishes
+							playingNotificationSound.set(false);
+						});
+					}
+
+					if ($isLastActiveTab) {
+						if ($settings?.notificationEnabled ?? false) {
+							new Notification(`${title} • Open WebUI`, {
+								body: content,
+								icon: `${WEBUI_BASE_URL}/static/favicon.png`
+							});
+						}
+					}
+
+					toast.custom(NotificationToast, {
+						componentProps: {
+							onClick: () => {
+								goto(`/c/${event.chat_id}`);
+							},
+							content: content,
+							title: title
+						},
+						duration: 15000,
+						unstyled: true
 					});
 				}
+			} else if (type === 'chat:title') {
+				currentChatPage.set(1);
+				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+			} else if (type === 'chat:tags') {
+				tags.set(await getAllTags(localStorage.token));
 			}
-			return;
-		}
-
-		// Session-targeted RPC calls (code execution, tool calls, direct completion)
-		// must ALWAYS be processed regardless of active chat or tab visibility,
-		// because the backend's sio.call blocks waiting for our callback response.
-		if (data?.session_id === $socket.id) {
+		} else if (data?.session_id === $socket.id) {
 			if (type === 'execute:python') {
 				console.log('execute:python', data);
-				executePythonAsWorker(data.id, data.code, cb, data.files || []);
-				return;
+				executePythonAsWorker(data.id, data.code, cb);
 			} else if (type === 'execute:tool') {
 				console.log('execute:tool', data);
-				executeTool(data, cb, event.chat_id);
-				return;
+				executeTool(data, cb);
 			} else if (type === 'request:chat:completion') {
 				console.log(data, $socket.id);
 				const { session_id, channel, form_data, model } = data;
@@ -646,58 +473,8 @@
 						done: true
 					});
 				}
-				return;
-			}
-		}
-
-		if (
-			!event?.internal &&
-			((event.chat_id !== $chatId && !$temporaryChatEnabled) || isInBackground)
-		) {
-			if (type === 'chat:completion') {
-				const { done, content, output, title } = data;
-				const displayTitle = title || $i18n.t('New Chat');
-				const contentPreview = cleanText(removeAllDetails(getOutputText(output) || content || ''));
-
-				if (done) {
-					if (
-						($settings?.notificationSound ?? true) &&
-						($settings?.notificationSoundAlways ?? false)
-					) {
-						playingNotificationSound.set(true);
-
-						const audio = new Audio(`/audio/notification.mp3`);
-						audio.play().finally(() => {
-							// Ensure the global state is reset after the sound finishes
-							playingNotificationSound.set(false);
-						});
-					}
-
-					if ($isLastActiveTab) {
-						if ($settings?.notificationEnabled ?? false) {
-							new Notification(`${displayTitle} / Open WebUI`, {
-								body: contentPreview,
-								icon: `${WEBUI_BASE_URL}/static/favicon.png`
-							});
-						}
-					}
-
-					toast.custom(NotificationToast, {
-						componentProps: {
-							onClick: () => {
-								goto(`/c/${event.chat_id}`);
-							},
-							content: contentPreview,
-							title: displayTitle
-						},
-						duration: 15000,
-						unstyled: true
-					});
-				}
-			} else if (type === 'chat:title') {
-				await refreshChatList(localStorage.token);
-			} else if (type === 'chat:tags') {
-				tags.set(await getAllTags(localStorage.token));
+			} else {
+				console.log('chatEventHandler', event);
 			}
 		}
 	};
@@ -710,36 +487,29 @@
 
 		// handle channel created event
 		if (event.data?.type === 'channel:created') {
-			const res = await getChannels(localStorage.token).catch(async (error) => {
-				return null;
-			});
-
-			if (res) {
-				await channels.set(
-					res.sort(
-						(a, b) =>
-							['', null, 'group', 'dm'].indexOf(a.type) - ['', null, 'group', 'dm'].indexOf(b.type)
-					)
-				);
-			}
-
+			await channels.set(
+				(await getChannels(localStorage.token)).sort(
+					(a, b) =>
+						['', null, 'group', 'dm'].indexOf(a.type) - ['', null, 'group', 'dm'].indexOf(b.type)
+				)
+			);
 			return;
 		}
 
 		// check url path
 		const channel = $page.url.pathname.includes(`/channels/${event.channel_id}`);
 
-		let isInBackground = document.visibilityState !== 'visible';
+		let isFocused = document.visibilityState !== 'visible';
 		if (window.electronAPI) {
 			const res = await window.electronAPI.send({
 				type: 'window:isFocused'
 			});
 			if (res) {
-				isInBackground = !res.isFocused;
+				isFocused = res.isFocused;
 			}
 		}
 
-		if ((!channel || isInBackground) && event?.user?.id !== $user?.id) {
+		if ((!channel || isFocused) && event?.user?.id !== $user?.id) {
 			await tick();
 			const type = event?.data?.type ?? null;
 			const data = event?.data?.data ?? null;
@@ -761,19 +531,13 @@
 						})
 					);
 				} else {
-					const res = await getChannels(localStorage.token).catch(async (error) => {
-						return null;
-					});
-
-					if (res) {
-						await channels.set(
-							res.sort(
-								(a, b) =>
-									['', null, 'group', 'dm'].indexOf(a.type) -
-									['', null, 'group', 'dm'].indexOf(b.type)
-							)
-						);
-					}
+					await channels.set(
+						(await getChannels(localStorage.token)).sort(
+							(a, b) =>
+								['', null, 'group', 'dm'].indexOf(a.type) -
+								['', null, 'group', 'dm'].indexOf(b.type)
+						)
+					);
 				}
 			}
 
@@ -782,7 +546,7 @@
 
 				if ($isLastActiveTab) {
 					if ($settings?.notificationEnabled ?? false) {
-						new Notification(`${title} / Open WebUI`, {
+						new Notification(`${title} • Open WebUI`, {
 							body: data?.content,
 							icon: `${WEBUI_API_BASE_URL}/users/${data?.user?.id}/profile/image`
 						});
@@ -805,73 +569,6 @@
 	};
 
 	const TOKEN_EXPIRY_BUFFER = 60; // seconds
-	const resolveFetchUrl = (input) => {
-		if (input instanceof Request) {
-			return new URL(input.url, window.location.origin);
-		}
-
-		return new URL(input, window.location.origin);
-	};
-
-	const resolveFetchHeaders = (input, init) => {
-		if (init?.headers) {
-			return new Headers(init.headers);
-		}
-
-		if (input instanceof Request) {
-			return input.headers;
-		}
-
-		return new Headers();
-	};
-
-	const isAuthenticatedBackendFetch = (input, init) => {
-		try {
-			const requestUrl = resolveFetchUrl(input);
-			const backendOrigin = new URL(WEBUI_BASE_URL || '/', window.location.origin).origin;
-
-			return (
-				requestUrl.origin === backendOrigin && resolveFetchHeaders(input, init).has('authorization')
-			);
-		} catch {
-			return false;
-		}
-	};
-
-	const clearExpiredSession = () => {
-		if (isAuthRedirectInProgress) {
-			return;
-		}
-
-		isAuthRedirectInProgress = true;
-		if (tokenTimer) {
-			clearInterval(tokenTimer);
-			tokenTimer = null;
-		}
-		user.set(null);
-		localStorage.removeItem('token');
-		// Clear the OAuth token cookie so /auth doesn't auto-login and redirect-loop
-		document.cookie = 'token=; Max-Age=0; path=/';
-		userSignOut().catch((error) => {
-			console.error('Error signing out expired session:', error);
-		});
-		toast.error($i18n.t('Session expired. Please sign in again.'));
-		isAuthRedirectInProgress = false;
-	};
-
-	const isCurrentSessionUnauthorized = async (originalFetch) => {
-		return originalFetch(`${WEBUI_API_BASE_URL}/auths/`, {
-			method: 'GET',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${localStorage.token}`
-			},
-			credentials: 'include'
-		})
-			.then((res) => res.status === 401)
-			.catch(() => false);
-	};
-
 	const checkTokenExpiry = async () => {
 		const exp = $user?.expires_at; // token expiry time in unix timestamp
 		const now = Math.floor(Date.now() / 1000); // current time in unix timestamp
@@ -882,132 +579,15 @@
 		}
 
 		if (now >= exp - TOKEN_EXPIRY_BUFFER) {
-			clearExpiredSession();
-		}
-	};
+			const res = await userSignOut();
+			user.set(null);
+			localStorage.removeItem('token');
 
-	const desktopEventHandler = async (event) => {
-		// Events that don't require auth
-		if (event.type === 'page:reload') {
-			location.reload();
-			return;
-		}
-		if (event.type === 'page:navigate' && event.data?.path) {
-			await goto(event.data.path);
-			return;
-		}
-		if (event.type === 'query' && (event.data?.query || event.data?.files?.length)) {
-			desktopEvent.set(event);
-			await goto('/');
-			return;
-		}
-		if (event.type === 'call') {
-			desktopEvent.set(event);
-			await goto('/');
-			return;
-		}
-		if (event.type === 'theme:update' && event.data?.theme) {
-			const newTheme = event.data.theme;
-			localStorage.setItem('theme', newTheme);
-			theme.set(newTheme);
-
-			// Apply theme classes (mirrors logic from chat/Settings/General.svelte)
-			const themes = ['dark', 'light', 'oled-dark'];
-			let themeToApply =
-				newTheme === 'oled-dark' ? 'dark' : newTheme === 'her' ? 'light' : newTheme;
-			if (newTheme === 'system') {
-				themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-			}
-			themes
-				.filter((e) => e !== themeToApply)
-				.forEach((e) => {
-					e.split(' ').forEach((cls) => document.documentElement.classList.remove(cls));
-				});
-			themeToApply.split(' ').forEach((cls) => document.documentElement.classList.add(cls));
-			return;
-		}
-		if (event.type === 'models:refresh') {
-			const token = localStorage.token;
-			if (token) {
-				models.set(
-					await getModels(
-						token,
-						$config?.features?.enable_direct_connections
-							? ($settings?.directConnections ?? null)
-							: null
-					)
-				);
-			}
-			return;
-		}
-
-		const token = localStorage.token;
-		if (!token) return;
-
-		// Only admins can modify system-level connections
-		if ($user?.role !== 'admin') return;
-
-		try {
-			if (event.type === 'connections:terminal') {
-				if (event.data.action === 'add') {
-					await addTerminalConnection(token, {
-						url: event.data.url,
-						key: event.data.key,
-						name: 'Local Open Terminal'
-					});
-				} else if (event.data.action === 'remove') {
-					await removeTerminalConnection(token, event.data.url);
-				}
-			} else if (event.type === 'connections:openai') {
-				if (event.data.action === 'add') {
-					await addOpenAIConnection(token, {
-						url: event.data.url,
-						key: event.data.key,
-						config: event.data.config
-					});
-				} else if (event.data.action === 'remove') {
-					await removeOpenAIConnection(token, event.data.url);
-				}
-			}
-		} catch (e) {
-			console.error('Desktop connection update failed:', e);
-		}
-	};
-
-	const windowMessageEventHandler = async (event) => {
-		if (
-			!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:9999'].includes(
-				event.origin
-			)
-		) {
-			return;
-		}
-
-		if (event.data === 'export:stats' || event.data?.type === 'export:stats') {
-			syncStatsEventData = event.data;
-			showSyncStatsModal = true;
+			location.href = res?.redirect_url ?? '/auth';
 		}
 	};
 
 	onMount(async () => {
-		const originalFetch = window.fetch.bind(window);
-		window.fetch = async (input, init) => {
-			const response = await originalFetch(input, init);
-
-			if (
-				response.status === 401 &&
-				localStorage.token &&
-				isAuthenticatedBackendFetch(input, init) &&
-				(await isCurrentSessionUnauthorized(originalFetch))
-			) {
-				clearExpiredSession();
-			}
-
-			return response;
-		};
-
-		window.addEventListener('message', windowMessageEventHandler);
-
 		let touchstartY = 0;
 
 		function isNavOrDescendant(el) {
@@ -1015,12 +595,12 @@
 			return nav && (el === nav || nav.contains(el));
 		}
 
-		const touchstartHandler = (e) => {
+		document.addEventListener('touchstart', (e) => {
 			if (!isNavOrDescendant(e.target)) return;
 			touchstartY = e.touches[0].clientY;
-		};
+		});
 
-		const touchmoveHandler = (e) => {
+		document.addEventListener('touchmove', (e) => {
 			if (!isNavOrDescendant(e.target)) return;
 			const touchY = e.touches[0].clientY;
 			const touchDiff = touchY - touchstartY;
@@ -1028,19 +608,15 @@
 				showRefresh = true;
 				e.preventDefault();
 			}
-		};
+		});
 
-		const touchendHandler = (e) => {
+		document.addEventListener('touchend', (e) => {
 			if (!isNavOrDescendant(e.target)) return;
 			if (showRefresh) {
 				showRefresh = false;
 				location.reload();
 			}
-		};
-
-		document.addEventListener('touchstart', touchstartHandler);
-		document.addEventListener('touchmove', touchmoveHandler, { passive: false });
-		document.addEventListener('touchend', touchendHandler);
+		});
 
 		if (typeof window !== 'undefined') {
 			if (window.applyTheme) {
@@ -1065,11 +641,6 @@
 					appData.set(data);
 				}
 			}
-
-			// Listen for desktop service lifecycle events (scalable protocol)
-			if (window.electronAPI.onEvent) {
-				window.electronAPI.onEvent(desktopEventHandler);
-			}
 		}
 
 		// Listen for messages on the BroadcastChannel
@@ -1080,39 +651,18 @@
 		};
 
 		// Set yourself as the last active tab when this tab is focused
-		const handlePageHidden = () => {
-			pageIsVisible = false;
-			pageWasHidden = true;
-			clearDisconnectToastTimer();
-		};
-
-		const handlePageVisible = () => {
-			pageIsVisible = true;
-			lastVisibleAt = Date.now();
-
-			isLastActiveTab.set(true); // This tab is now the active tab
-			bc.postMessage('active'); // Notify other tabs that this tab is active
-
-			// Check token expiry when the tab becomes active
-			checkTokenExpiry();
-
-			if ($socket && !$socket.connected) {
-				scheduleDisconnectToast();
-			}
-		};
-
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
-				handlePageVisible();
-			} else {
-				handlePageHidden();
+				isLastActiveTab.set(true); // This tab is now the active tab
+				bc.postMessage('active'); // Notify other tabs that this tab is active
+
+				// Check token expiry when the tab becomes active
+				checkTokenExpiry();
 			}
 		};
 
 		// Add event listener for visibility state changes
 		document.addEventListener('visibilitychange', handleVisibilityChange);
-		window.addEventListener('pagehide', handlePageHidden);
-		window.addEventListener('pageshow', handlePageVisible);
 
 		// Call visibility change handler initially to set state on load
 		handleVisibilityChange();
@@ -1138,6 +688,14 @@
 				$socket?.on('events', chatEventHandler);
 				$socket?.on('events:channel', channelEventHandler);
 
+				const userSettings = await getUserSettings(localStorage.token);
+				if (userSettings) {
+					settings.set(userSettings.ui);
+				} else {
+					settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+				}
+				setTextScale($settings?.textScale ?? 1);
+
 				// Set up the token expiry check
 				if (tokenTimer) {
 					clearInterval(tokenTimer);
@@ -1154,12 +712,6 @@
 			backendConfig = await getBackendConfig();
 			console.log('Backend config:', backendConfig);
 		} catch (error) {
-			if (error?.authRedirect) {
-				// Forward-auth proxy is redirecting to an external login page.
-				// Full-page navigation lets the browser follow the redirect natively.
-				window.location.href = '/';
-				return;
-			}
 			console.error('Error loading backend config:', error);
 		}
 		// Initialize i18n even if we didn't get a backend config,
@@ -1171,7 +723,7 @@
 			const browserLanguages = navigator.languages
 				? navigator.languages
 				: [navigator.language || navigator.userLanguage];
-			const lang = backendConfig?.default_locale
+			const lang = backendConfig.default_locale
 				? backendConfig.default_locale
 				: bestMatchingLanguage(languages, browserLanguages, 'en-US');
 			changeLanguage(lang);
@@ -1186,6 +738,9 @@
 			if ($config) {
 				await setupSocket($config.features?.enable_websocket ?? true);
 
+				const currentUrl = `${window.location.pathname}${window.location.search}`;
+				const encodedUrl = encodeURIComponent(currentUrl);
+
 				if (localStorage.token) {
 					// Get Session User Info
 					const sessionUser = await getSessionUser(localStorage.token).catch((error) => {
@@ -1195,30 +750,17 @@
 
 					if (sessionUser) {
 						await user.set(sessionUser);
-						try {
-							await config.set(await getBackendConfig());
-						} catch (error) {
-							console.error('Error refreshing backend config:', error);
-						}
-
-						// Keep user timezone in sync on every app load/refresh
-						const timezone = getUserTimezone();
-						if (timezone) {
-							updateUserTimezone(localStorage.token, timezone);
-						}
-
-						// Relay auth token to desktop app for API access
-						if (window.electronAPI?.send) {
-							window.electronAPI
-								.send({
-									type: 'token:update',
-									token: localStorage.token
-								})
-								.catch(() => {});
-						}
+						await config.set(await getBackendConfig());
 					} else {
+						// Redirect Invalid Session User to /auth Page
 						localStorage.removeItem('token');
-						await user.set(null);
+						await goto(`/auth?redirect=${encodedUrl}`);
+					}
+				} else {
+					// Don't redirect if we're already on the auth page
+					// Needed because we pass in tokens from OAuth logins via URL fragments
+					if ($page.url.pathname !== '/auth') {
+						await goto(`/auth?redirect=${encodedUrl}`);
 					}
 				}
 			}
@@ -1259,36 +801,9 @@
 			loaded = true;
 		}
 
-		// Auto-show SyncStatsModal when opened with ?sync=true (from community)
-		if (
-			(window.opener ?? false) &&
-			$page.url.searchParams.get('sync') === 'true' &&
-			($config?.features?.enable_community_sharing ?? false)
-		) {
-			showSyncStatsModal = true;
-		}
-
 		return () => {
 			window.removeEventListener('resize', onResize);
-			window.removeEventListener('message', windowMessageEventHandler);
-			document.removeEventListener('touchstart', touchstartHandler);
-			document.removeEventListener('touchmove', touchmoveHandler);
-			document.removeEventListener('touchend', touchendHandler);
-			document.removeEventListener('visibilitychange', handleVisibilityChange);
-			window.removeEventListener('pagehide', handlePageHidden);
-			window.removeEventListener('pageshow', handlePageVisible);
 		};
-	});
-
-	$: if (typeof document !== 'undefined') {
-		document.documentElement.classList.toggle(
-			'high-contrast',
-			$settings?.highContrastMode ?? false
-		);
-	}
-
-	onDestroy(() => {
-		bc.close();
 	});
 </script>
 
@@ -1306,13 +821,6 @@
 		crossorigin="use-credentials"
 	/>
 </svelte:head>
-
-<a
-	href="#main-content"
-	class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[9999] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-gray-900 focus:shadow-lg dark:focus:bg-gray-800 dark:focus:text-gray-100"
->
-	{$i18n.t('Skip to main content')}
-</a>
 
 {#if showRefresh}
 	<div class=" py-5">
@@ -1334,10 +842,6 @@
 	{/if}
 {/if}
 
-{#if $config?.features.enable_community_sharing}
-	<SyncStatsModal bind:show={showSyncStatsModal} eventData={syncStatsEventData} />
-{/if}
-
 <Toaster
 	theme={$theme.includes('dark')
 		? 'dark'
@@ -1349,10 +853,4 @@
 	richColors
 	position="top-right"
 	closeButton
-	toastOptions={{
-		classes: {
-			closeButton:
-				'!bg-white/80 !text-gray-500 !border-gray-200 hover:!bg-gray-50 hover:!text-gray-700 dark:!bg-gray-850 dark:!text-gray-400 dark:!border-gray-700 dark:hover:!bg-gray-800 dark:hover:!text-gray-200'
-		}
-	}}
 />

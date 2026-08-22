@@ -6,24 +6,18 @@
 	import ProfileImage from '../Messages/ProfileImage.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Heart from '$lib/components/icons/Heart.svelte';
-	import { getOutputText } from '../Messages/structuredOutput';
 
 	const i18n = getContext('i18n');
 
 	type $$Props = NodeProps;
 	export let data: $$Props['data'];
-
-	const getMessageContent = (nodeData: any) =>
-		getOutputText(nodeData?.message?.output) || nodeData?.message?.content || '';
-
-	$: messageContent = getMessageContent(data);
 </script>
 
 <div
-	class="px-4 py-3 shadow-md rounded-xl dark:bg-black bg-white border border-gray-100 dark:border-gray-900 w-60 h-20 group"
+	class="px-4 py-3 shadow-md rounded-xl dark:bg-black bg-white border dark:border-gray-900 w-60 h-20 group"
 >
 	<Tooltip
-		content={data?.message?.error ? data.message.error.content : messageContent}
+		content={data?.message?.error ? data.message.error.content : data.message.content}
 		class="w-full"
 		allowHTML={false}
 	>
@@ -31,11 +25,11 @@
 			<div class="flex w-full">
 				<ProfileImage
 					src={`${WEBUI_API_BASE_URL}/users/${data.user.id}/profile/image`}
-					className={'size-5 -translate-y-[1px] flex-shrink-0'}
+					className={'size-5 -translate-y-[1px]'}
 				/>
-				<div class="ml-2 flex-1 min-w-0">
+				<div class="ml-2">
 					<div class=" flex justify-between items-center">
-						<div class="text-xs text-black dark:text-white font-normal line-clamp-1">
+						<div class="text-xs text-black dark:text-white font-medium line-clamp-1">
 							{data?.user?.name ?? 'User'}
 						</div>
 					</div>
@@ -43,28 +37,25 @@
 					{#if data?.message?.error}
 						<div class="text-red-500 line-clamp-2 text-xs mt-0.5">{data.message.error.content}</div>
 					{:else}
-						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{messageContent}</div>
+						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{data.message.content}</div>
 					{/if}
 				</div>
 			</div>
 		{:else}
 			<div class="flex w-full">
 				<ProfileImage
-					src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${data.model?.id ?? data.message.model}&lang=${$i18n.language}`}
-					className={'size-5 -translate-y-[1px] flex-shrink-0'}
+					src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${data.model.id}&lang=${$i18n.language}`}
+					className={'size-5 -translate-y-[1px]'}
 				/>
 
-				<div class="ml-2 flex-1 min-w-0">
+				<div class="ml-2">
 					<div class=" flex justify-between items-center">
-						<div class="text-xs text-black dark:text-white font-normal line-clamp-1">
+						<div class="text-xs text-black dark:text-white font-medium line-clamp-1">
 							{data?.model?.name ?? data?.message?.model ?? 'Assistant'}
 						</div>
 
 						<button
 							class={data?.message?.favorite ? '' : 'invisible group-hover:visible'}
-							aria-label={data?.message?.favorite
-								? $i18n.t('Remove from favorites')
-								: $i18n.t('Add to favorites')}
 							on:click={() => {
 								data.message.favorite = !(data?.message?.favorite ?? false);
 							}}
@@ -83,7 +74,7 @@
 							{data.message.error.content}
 						</div>
 					{:else}
-						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{messageContent}</div>
+						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{data.message.content}</div>
 					{/if}
 				</div>
 			</div>
