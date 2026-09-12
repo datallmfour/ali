@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { getContext, onMount, onDestroy } from 'svelte';
+	import { getContext, onMount } from 'svelte';
 
-	const i18n = getContext('i18n') as any;
+	const i18n = getContext('i18n');
 
 	import { user as _user } from '$lib/stores';
-	import { getUserInfoById, searchUsers } from '$lib/apis/users';
+	import { getUserById, searchUsers } from '$lib/apis/users';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -19,42 +19,26 @@
 	import { getGroups } from '$lib/apis/groups';
 
 	export let includeGroups = true;
-	export let includeUsers = true;
 	export let pagination = false;
-	export let includeSessionUser = false;
-	export let accessGrants: { principal_type: string; principal_id: string }[] = [];
 
-	export let groupIds: string[] = [];
-	export let userIds: string[] = [];
+	export let groupIds = [];
+	export let userIds = [];
 
-	let groups: any[] | null = null;
-	let filteredGroups: any[] = [];
-
-	const hasGrant = (principalType: string, principalId: string) =>
-		accessGrants.some(
-			(grant) => grant.principal_type === principalType && grant.principal_id === principalId
-		);
+	let groups = null;
+	let filteredGroups = [];
 
 	$: filteredGroups = groups
-		? groups.filter(
-				(group) =>
-					group.name.toLowerCase().includes(query.toLowerCase()) && !hasGrant('group', group.id)
-			)
+		? groups.filter((group) => group.name.toLowerCase().includes(query.toLowerCase()))
 		: [];
 
-	$: filteredUsers = (users ?? []).filter(
-		(user) => !hasGrant('user', user.id) && (includeSessionUser || user?.id !== $_user?.id)
-	);
-
-	let selectedGroup: Record<string, any> = {};
-	let selectedUsers: Record<string, any> = {};
+	let selectedGroup = {};
+	let selectedUsers = {};
 
 	let page = 1;
-	let users: any[] | null = null;
-	let total: number | null = null;
+	let users = null;
+	let total = null;
 
 	let query = '';
-	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 	let orderBy = 'name'; // default sort key
 	let direction = 'asc'; // default sort order
 
@@ -76,30 +60,15 @@
 		}
 	};
 
-	const handleSearchInput = () => {
-		clearTimeout(searchDebounceTimer);
-		searchDebounceTimer = setTimeout(() => {
-			getUserList();
-		}, 300);
-	};
-
-	onDestroy(() => {
-		clearTimeout(searchDebounceTimer);
-	});
-
-	$: if (page !== null && orderBy !== null && direction !== null) {
+	$: if (page !== null && query !== null && orderBy !== null && direction !== null) {
 		getUserList();
 	}
 
 	onMount(async () => {
-		groups = await getGroups(localStorage.token, true).catch((error) => {
-			console.error(error);
-			return [];
-		});
-
+		groups = await getGroups(localStorage.token, true);
 		if (userIds.length > 0) {
 			userIds.forEach(async (id) => {
-				const res = await getUserInfoById(localStorage.token, id).catch((error) => {
+				const res = await getUserById(localStorage.token, id).catch((error) => {
 					console.error(error);
 					return null;
 				});
@@ -200,14 +169,13 @@
 					<input
 						class=" w-full text-sm pr-4 py-1 rounded-r-xl outline-hidden bg-transparent"
 						bind:value={query}
-						on:input={handleSearchInput}
 						placeholder={$i18n.t('Search')}
 					/>
 				</div>
 			</div>
 		</div>
 
-		{#if filteredUsers.length > 0 || filteredGroups.length > 0}
+		{#if users.length > 0}
 			<div class="scrollbar-hidden relative whitespace-nowrap w-full max-w-full">
 				<div class=" text-sm text-left text-gray-500 dark:text-gray-400 w-full max-w-full">
 					<div class="w-full max-h-96 overflow-y-auto rounded-lg">
@@ -231,10 +199,10 @@
 											}
 										}}
 									>
-										<div class="px-3 py-1.5 font-normal text-gray-900 dark:text-white flex-1">
+										<div class="px-3 py-1.5 font-medium text-gray-900 dark:text-white flex-1">
 											<div class="flex items-center gap-2">
 												<Tooltip content={group.name} placement="top-start">
-													<div class="font-normal truncate flex items-center gap-1">
+													<div class="font-medium truncate flex items-center gap-1">
 														{group.name} <span class="text-gray-500">{group.member_count}</span>
 													</div>
 												</Tooltip>
@@ -253,13 +221,13 @@
 							</div>
 						{/if}
 
-						{#if includeUsers && filteredUsers.length > 0}
-							<div class="text-xs text-gray-500 mb-1 mx-1">
-								{$i18n.t('Users')}
-							</div>
+						<div class="text-xs text-gray-500 mb-1 mx-1">
+							{$i18n.t('Users')}
+						</div>
 
-							<div>
-								{#each filteredUsers as user (user.id)}
+						<div>
+							{#each users as user, userIdx (user.id)}
+								{#if user?.id !== $_user?.id}
 									<button
 										class=" dark:border-gray-850 text-xs flex items-center justify-between w-full"
 										type="button"
@@ -273,7 +241,7 @@
 											}
 										}}
 									>
-										<div class="px-3 py-1.5 font-normal text-gray-900 dark:text-white flex-1">
+										<div class="px-3 py-1.5 font-medium text-gray-900 dark:text-white flex-1">
 											<div class="flex items-center gap-2">
 												<ProfilePreview {user} side="right" align="center" sideOffset={6}>
 													<img
@@ -283,7 +251,7 @@
 													/>
 												</ProfilePreview>
 												<Tooltip content={user.email} placement="top-start">
-													<div class="font-normal truncate">{user.name}</div>
+													<div class="font-medium truncate">{user.name}</div>
 												</Tooltip>
 
 												{#if user?.is_active}
@@ -308,9 +276,9 @@
 											</div>
 										</div>
 									</button>
-								{/each}
-							</div>
-						{/if}
+								{/if}
+							{/each}
+						</div>
 					</div>
 				</div>
 			</div>

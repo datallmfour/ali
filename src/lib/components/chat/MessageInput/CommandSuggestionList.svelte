@@ -1,55 +1,44 @@
 <script lang="ts">
-	import SlashCommands from './Commands/SlashCommands.svelte';
-	import AtCommands from './Commands/AtCommands.svelte';
+	import { knowledge, prompts } from '$lib/stores';
+
+	import { getPrompts } from '$lib/apis/prompts';
+	import { getKnowledgeBases } from '$lib/apis/knowledge';
+
+	import Prompts from './Commands/Prompts.svelte';
 	import Knowledge from './Commands/Knowledge.svelte';
-	import Skills from './Commands/Skills.svelte';
-	import Emojis from './Commands/Emojis.svelte';
-	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
+	import Models from './Commands/Models.svelte';
+	import Spinner from '$lib/components/common/Spinner.svelte';
+
+	import { onMount } from 'svelte';
 
 	export let char = '';
 	export let query = '';
-	export let command: (payload: {
-		id: string;
-		label: string;
-		content?: string;
-		type?: string;
-	}) => void;
+	export let command: (payload: { id: string; label: string }) => void;
 
-	export let onSelect: (e: any) => void = () => {};
-	export let onUpload: (e: any) => void = () => {};
-	export let onCompact: () => void = () => {};
-	export let onStatus: () => void = () => {};
-	export let onFork: () => void = () => {};
-	export let onModel: () => void = () => {};
-	export let onSettings: () => void = () => {};
-	export let onTemporary: () => void = () => {};
-	export let insertTextHandler: (text: string) => void = () => {};
-	export let canCompact: boolean | (() => boolean) = false;
-	export let compactDisabled: boolean | (() => boolean) = false;
-	export let canStatus: boolean | (() => boolean) = false;
-	export let canFork: boolean | (() => boolean) = false;
-	export let forkDisabled: boolean | (() => boolean) = false;
-	export let canTemporary: boolean | (() => boolean) = false;
-	export let temporaryEnabled: boolean | (() => boolean) = false;
-	export let contextUsage = null;
+	export let onSelect = (e) => {};
+	export let onUpload = (e) => {};
+	export let insertTextHandler = (text) => {};
 
-	$: compactAvailable = typeof canCompact === 'function' ? canCompact() : canCompact;
-	$: isCompactDisabled =
-		typeof compactDisabled === 'function' ? compactDisabled() : compactDisabled;
-	$: statusAvailable = typeof canStatus === 'function' ? canStatus() : canStatus;
-	$: forkAvailable = typeof canFork === 'function' ? canFork() : canFork;
-	$: isForkDisabled = typeof forkDisabled === 'function' ? forkDisabled() : forkDisabled;
-	$: temporaryAvailable = typeof canTemporary === 'function' ? canTemporary() : canTemporary;
-	$: isTemporaryEnabled =
-		typeof temporaryEnabled === 'function' ? temporaryEnabled() : temporaryEnabled;
-	$: resolvedContextUsage = typeof contextUsage === 'function' ? contextUsage() : contextUsage;
-	$: contextHasThreshold = Number(resolvedContextUsage?.threshold) > 0;
-	$: contextPercent = contextHasThreshold
-		? Math.max(0, Math.round(resolvedContextUsage?.percent ?? 0))
-		: null;
+	let suggestionElement = null;
+	let loading = false;
+	let filteredItems = [];
 
-	let suggestionElement: any = null;
-	let filteredItems: any[] = [];
+	const init = async () => {
+		loading = true;
+		await Promise.all([
+			(async () => {
+				prompts.set(await getPrompts(localStorage.token));
+			})(),
+			(async () => {
+				knowledge.set(await getKnowledgeBases(localStorage.token));
+			})()
+		]);
+		loading = false;
+	};
+
+	onMount(() => {
+		init();
+	});
 
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (!['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(event.key)) return false;
@@ -87,61 +76,25 @@
 	}
 </script>
 
-<div class={(filteredItems ?? []).length > 0 ? '' : 'hidden'} id="suggestions-container">
-	<DropdownMenu className="w-72 max-w-[calc(100vw-1rem)] overflow-x-hidden font-sans text-xs">
-		<div class="max-h-60 overflow-y-auto overflow-x-hidden scrollbar-thin">
+<div
+	class="{(filteredItems ?? []).length > 0
+		? ''
+		: 'hidden'} rounded-2xl shadow-lg border border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-850 w-72 p-1"
+	id="suggestions-container"
+>
+	<div class="overflow-y-auto scrollbar-thin max-h-60">
+		{#if !loading}
 			{#if char === '/'}
-				<SlashCommands
+				<Prompts
 					bind:this={suggestionElement}
 					{query}
 					bind:filteredItems
-					canCompact={compactAvailable}
-					compactDisabled={isCompactDisabled}
-					canStatus={statusAvailable}
-					canFork={forkAvailable}
-					forkDisabled={isForkDisabled}
-					canTemporary={temporaryAvailable}
-					temporaryEnabled={isTemporaryEnabled}
-					{contextPercent}
-					{contextHasThreshold}
+					prompts={$prompts ?? []}
 					onSelect={(e) => {
 						const { type, data } = e;
 
 						if (type === 'prompt') {
-							command({
-								id: data.command,
-								label: data.command,
-								content: data.content,
-								type: 'prompt'
-							});
-						} else if (type === 'command' && data.id === 'compact') {
-							command({ id: data.id, label: data.id });
-							onCompact();
-						} else if (type === 'command' && data.id === 'status') {
-							command({ id: data.id, label: data.id });
-							onStatus();
-						} else if (type === 'command' && data.id === 'fork') {
-							command({ id: data.id, label: data.id });
-							onFork();
-						} else if (type === 'command' && data.id === 'model') {
-							command({ id: data.id, label: data.id });
-							onModel();
-						} else if (type === 'command' && data.id === 'settings') {
-							command({ id: data.id, label: data.id });
-							onSettings();
-						} else if (type === 'command' && data.id === 'temporary') {
-							command({ id: data.id, label: data.id });
-							onTemporary();
-						} else if (type === 'skill') {
-							command({
-								id: `${data.id}|${data.name}`,
-								label: data.name
-							});
-
-							onSelect({
-								type: 'skill',
-								data: data
-							});
+							insertTextHandler(data.content);
 						}
 					}}
 				/>
@@ -150,6 +103,7 @@
 					bind:this={suggestionElement}
 					{query}
 					bind:filteredItems
+					knowledge={$knowledge ?? []}
 					onSelect={(e) => {
 						const { type, data } = e;
 
@@ -158,6 +112,13 @@
 
 							onUpload({
 								type: 'file',
+								data: data
+							});
+						} else if (type === 'youtube') {
+							insertTextHandler('');
+
+							onUpload({
+								type: 'youtube',
 								data: data
 							});
 						} else if (type === 'web') {
@@ -171,7 +132,7 @@
 					}}
 				/>
 			{:else if char === '@'}
-				<AtCommands
+				<Models
 					bind:this={suggestionElement}
 					{query}
 					bind:filteredItems
@@ -185,68 +146,14 @@
 								type: 'model',
 								data: data
 							});
-						} else if (type === 'knowledge') {
-							insertTextHandler('');
-
-							onUpload({
-								type: 'file',
-								data: data
-							});
-						} else if (type === 'filesystem') {
-							insertTextHandler('');
-
-							onUpload({
-								type: 'filesystem',
-								data: data
-							});
-						} else if (type === 'web') {
-							insertTextHandler('');
-
-							onUpload({
-								type: 'web',
-								data: data
-							});
-						}
-					}}
-				/>
-			{:else if char === '$'}
-				<Skills
-					bind:this={suggestionElement}
-					{query}
-					bind:filteredItems
-					onSelect={(e) => {
-						const { type, data } = e;
-
-						if (type === 'skill') {
-							command({
-								id: `${data.id}|${data.name}`,
-								label: data.name
-							});
-
-							onSelect({
-								type: 'skill',
-								data: data
-							});
-						}
-					}}
-				/>
-			{:else if char === ':'}
-				<Emojis
-					bind:this={suggestionElement}
-					{query}
-					bind:filteredItems
-					onSelect={(e) => {
-						const { type, data } = e;
-
-						if (type === 'emoji') {
-							command({
-								id: data.name,
-								label: data.shortCodes[0]
-							});
 						}
 					}}
 				/>
 			{/if}
-		</div>
-	</DropdownMenu>
+		{:else}
+			<div class="py-4 flex flex-col w-full rounded-xl text-gray-700 dark:text-gray-300">
+				<Spinner />
+			</div>
+		{/if}
+	</div>
 </div>

@@ -72,7 +72,7 @@
 					const csv = e.target.result;
 					const rows = csv.split('\n');
 
-					const validRows = [];
+					let userCount = 0;
 
 					for (const [idx, row] of rows.entries()) {
 						const columns = row.split(',').map((col) => col.trim());
@@ -83,21 +83,7 @@
 								columns.length === 4 &&
 								['admin', 'user', 'pending'].includes(columns[3].toLowerCase())
 							) {
-								validRows.push({ idx, columns });
-							} else {
-								toast.error(`Row ${idx + 1}: invalid format.`);
-							}
-						}
-					}
-
-					let userCount = 0;
-					const BATCH_SIZE = 10;
-
-					for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-						const batch = validRows.slice(i, i + BATCH_SIZE);
-						const results = await Promise.allSettled(
-							batch.map(({ idx, columns }) =>
-								addUser(
+								const res = await addUser(
 									localStorage.token,
 									columns[0],
 									columns[1],
@@ -107,13 +93,13 @@
 								).catch((error) => {
 									toast.error(`Row ${idx + 1}: ${error}`);
 									return null;
-								})
-							)
-						);
+								});
 
-						for (const result of results) {
-							if (result.status === 'fulfilled' && result.value) {
-								userCount++;
+								if (res) {
+									userCount = userCount + 1;
+								}
+							} else {
+								toast.error(`Row ${idx + 1}: invalid format.`);
 							}
 						}
 					}
@@ -143,16 +129,15 @@
 
 <Modal size="sm" bind:show>
 	<div>
-		<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
-			<div class=" text-sm font-medium self-center">{$i18n.t('Add User')}</div>
+		<div class=" flex justify-between dark:text-gray-300 px-5 pt-4 pb-2">
+			<div class=" text-lg font-medium self-center">{$i18n.t('Add User')}</div>
 			<button
-				class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-				aria-label={$i18n.t('Close')}
+				class="self-center"
 				on:click={() => {
 					show = false;
 				}}
 			>
-				<XMark className={'size-4'} />
+				<XMark className={'size-5'} />
 			</button>
 		</div>
 
@@ -165,7 +150,7 @@
 					}}
 				>
 					<div
-						class="flex -mt-2 mb-1.5 gap-1 scrollbar-none overflow-x-auto w-fit text-center text-sm font-normal rounded-full bg-transparent dark:text-gray-200"
+						class="flex -mt-2 mb-1.5 gap-1 scrollbar-none overflow-x-auto w-fit text-center text-sm font-medium rounded-full bg-transparent dark:text-gray-200"
 					>
 						<button
 							class="min-w-fit p-1.5 {tab === ''
@@ -195,9 +180,8 @@
 
 								<div class="flex-1">
 									<select
-										class="w-full capitalize rounded-lg text-sm bg-transparent dark:disabled:text-gray-500 outline-hidden"
+										class="dark:bg-gray-900 w-full capitalize rounded-lg text-sm bg-transparent dark:disabled:text-gray-500 outline-hidden"
 										bind:value={_user.role}
-										aria-label={$i18n.t('Role')}
 										placeholder={$i18n.t('Enter Your Role')}
 										required
 									>
@@ -216,7 +200,6 @@
 										class="w-full text-sm bg-transparent disabled:text-gray-500 dark:disabled:text-gray-500 outline-hidden"
 										type="text"
 										bind:value={_user.name}
-										aria-label={$i18n.t('Name')}
 										placeholder={$i18n.t('Enter Your Full Name')}
 										autocomplete="off"
 										required
@@ -234,7 +217,6 @@
 										class="w-full text-sm bg-transparent disabled:text-gray-500 dark:disabled:text-gray-500 outline-hidden"
 										type="email"
 										bind:value={_user.email}
-										aria-label={$i18n.t('Email')}
 										placeholder={$i18n.t('Enter Your Email')}
 										required
 									/>
@@ -249,7 +231,6 @@
 										class="w-full text-sm bg-transparent disabled:text-gray-500 dark:disabled:text-gray-500 outline-hidden"
 										type="password"
 										bind:value={_user.password}
-										aria-label={$i18n.t('Password')}
 										placeholder={$i18n.t('Enter Your Password')}
 										autocomplete="off"
 										required
@@ -268,7 +249,7 @@
 									/>
 
 									<button
-										class="w-full text-sm font-normal py-3 bg-transparent hover:bg-gray-100 border border-dashed dark:border-gray-850 dark:hover:bg-gray-850 text-center rounded-xl"
+										class="w-full text-sm font-medium py-3 bg-transparent hover:bg-gray-100 border border-dashed dark:border-gray-850 dark:hover:bg-gray-850 text-center rounded-xl"
 										type="button"
 										on:click={() => {
 											document.getElementById('upload-user-csv-input')?.click();
@@ -297,9 +278,9 @@
 						{/if}
 					</div>
 
-					<div class="flex justify-end pt-3 text-sm font-normal">
+					<div class="flex justify-end pt-3 text-sm font-medium">
 						<button
-							class="px-3.5 py-1.5 text-sm font-normal bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 whitespace-nowrap {loading
+							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex flex-row space-x-1 items-center {loading
 								? ' cursor-not-allowed'
 								: ''}"
 							type="submit"
@@ -308,9 +289,9 @@
 							{$i18n.t('Save')}
 
 							{#if loading}
-								<span class="shrink-0">
+								<div class="ml-2 self-center">
 									<Spinner />
-								</span>
+								</div>
 							{/if}
 						</button>
 					</div>
