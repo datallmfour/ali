@@ -37,9 +37,6 @@
 		}
 	};
 
-	// LICENSE covers this Open WebUI fallback logo.
-	// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-	// https://docs.openwebui.com/license.
 	let profileImageUrl = `${WEBUI_BASE_URL}/favicon.png`;
 	let description = '';
 
@@ -47,17 +44,17 @@
 	let modelIds = [];
 	let filterMode = 'include';
 
-	let accessGrants = [];
+	let accessControl = {};
 
 	let imageInputElement;
 	let loading = false;
 	let showDeleteConfirmDialog = false;
 
 	const addModelHandler = () => {
-		if (selectedModelId && !modelIds.includes(selectedModelId)) {
+		if (selectedModelId) {
 			modelIds = [...modelIds, selectedModelId];
+			selectedModelId = '';
 		}
-		selectedModelId = '';
 	};
 
 	const submitHandler = () => {
@@ -86,7 +83,7 @@
 				description: description || null,
 				model_ids: modelIds.length > 0 ? modelIds : null,
 				filter_mode: modelIds.length > 0 ? (filterMode ? filterMode : null) : null,
-				access_grants: accessGrants
+				access_control: accessControl
 			}
 		};
 
@@ -96,9 +93,6 @@
 
 		name = '';
 		id = '';
-		// LICENSE covers this Open WebUI fallback logo.
-		// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-		// https://docs.openwebui.com/license.
 		profileImageUrl = `${WEBUI_BASE_URL}/favicon.png`;
 		description = '';
 		modelIds = [];
@@ -111,9 +105,9 @@
 			id = model.id;
 			profileImageUrl = model.meta.profile_image_url;
 			description = model.meta.description;
-			modelIds = [...new Set(model.meta.model_ids || [])];
+			modelIds = model.meta.model_ids || [];
 			filterMode = model.meta?.filter_mode ?? 'include';
-			accessGrants = model.meta.access_grants ?? [];
+			accessControl = 'access_control' in model.meta ? model.meta.access_control : {};
 		}
 	};
 
@@ -207,7 +201,7 @@
 											ctx.drawImage(img, offsetX, offsetY, newWidth, newHeight);
 
 											// Get the base64 representation of the compressed image
-											const compressedSrc = canvas.toDataURL('image/webp', 0.8);
+											const compressedSrc = canvas.toDataURL('image/jpeg');
 
 											// Display the compressed image
 											profileImageUrl = compressedSrc;
@@ -237,7 +231,7 @@
 								<img
 									src={profileImageUrl}
 									class="size-16 rounded-full object-cover shrink-0"
-									alt={$i18n.t('Profile')}
+									alt="Profile"
 								/>
 
 								<div
@@ -299,7 +293,7 @@
 						<hr class=" border-gray-100 dark:border-gray-700/10 my-2.5 w-full" />
 
 						<div class="my-2">
-							<AccessControl bind:accessGrants />
+							<AccessControl bind:accessControl />
 						</div>
 
 						<hr class=" border-gray-100 dark:border-gray-700/10 my-2.5 w-full" />
@@ -356,13 +350,13 @@
 
 						<div class="flex items-center">
 							<select
-								class="w-full py-1 text-sm rounded-lg bg-transparent {selectedModelId
+								class="dark:bg-gray-900 w-full py-1 text-sm rounded-lg bg-transparent {selectedModelId
 									? ''
 									: 'text-gray-500'} placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-hidden"
 								bind:value={selectedModelId}
 							>
 								<option value="">{$i18n.t('Select a model')}</option>
-								{#each $models.filter((m) => m?.owned_by !== 'arena' && !modelIds.includes(m?.id)) as model}
+								{#each $models.filter((m) => m?.owned_by !== 'arena') as model}
 									<option value={model.id} class="bg-gray-50 dark:bg-gray-700">{model.name}</option>
 								{/each}
 							</select>
