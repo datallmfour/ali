@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { resolveLocalizedResource } from '$lib/utils/localizedContent';
 	import { toast } from 'svelte-sonner';
 
 	import { config, functions, models, settings, tools, user } from '$lib/stores';
@@ -63,9 +62,6 @@
 			// Convert array to string
 			for (const property in valvesSpec.properties) {
 				if (valvesSpec.properties[property]?.type === 'array') {
-					if (valvesSpec.properties[property]?.input?.type === 'multiselect') {
-						continue;
-					}
 					valves[property] = (valves[property] ?? []).join(',');
 				}
 			}
@@ -79,9 +75,6 @@
 			// Convert string to array
 			for (const property in valvesSpec.properties) {
 				if (valvesSpec.properties[property]?.type === 'array') {
-					if (valvesSpec.properties[property]?.input?.type === 'multiselect') {
-						continue;
-					}
 					valves[property] = (valves[property] ?? '').split(',').map((v) => v.trim());
 				}
 			}
@@ -144,7 +137,7 @@
 
 {#if show && !loading}
 	<form
-		class="flex flex-col h-full justify-between space-y-2 text-xs"
+		class="flex flex-col h-full justify-between space-y-3 text-sm"
 		on:submit|preventDefault={() => {
 			submitHandler();
 			dispatch('save');
@@ -155,7 +148,7 @@
 				<div class="flex gap-2">
 					<div class="flex-1">
 						<select
-							class="w-full rounded-sm py-1 px-1 text-xs bg-transparent outline-hidden"
+							class="  w-full rounded-sm text-xs py-2 px-1 bg-transparent outline-hidden"
 							bind:value={tab}
 							placeholder={$i18n.t('Select')}
 						>
@@ -168,7 +161,7 @@
 
 					<div class="flex-1">
 						<select
-							class="w-full rounded-sm py-1 px-1 text-xs bg-transparent outline-hidden"
+							class="w-full rounded-sm py-2 px-1 text-xs bg-transparent outline-hidden"
 							bind:value={selectedId}
 							on:change={async () => {
 								await tick();
@@ -179,22 +172,16 @@
 									>{$i18n.t('Select a tool')}</option
 								>
 
-								{#each $tools
-									.filter((tool) => !tool?.id?.startsWith('server:'))
-									.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '')) as tool, toolIdx}
-									<option value={tool.id} class="bg-gray-100 dark:bg-gray-800"
-										>{resolveLocalizedResource(tool, $i18n.language)}</option
-									>
+								{#each $tools.filter((tool) => !tool?.id?.startsWith('server:')) as tool, toolIdx}
+									<option value={tool.id} class="bg-gray-100 dark:bg-gray-800">{tool.name}</option>
 								{/each}
 							{:else if tab === 'functions'}
 								<option value="" selected disabled class="bg-gray-100 dark:bg-gray-800"
 									>{$i18n.t('Select a function')}</option
 								>
 
-								{#each $functions.sort( (a, b) => (a.name ?? '').localeCompare(b.name ?? '') ) as func, funcIdx}
-									<option value={func.id} class="bg-gray-100 dark:bg-gray-800"
-										>{resolveLocalizedResource(func, $i18n.language)}</option
-									>
+								{#each $functions as func, funcIdx}
+									<option value={func.id} class="bg-gray-100 dark:bg-gray-800">{func.name}</option>
 								{/each}
 							{/if}
 						</select>
@@ -203,21 +190,17 @@
 			</div>
 
 			{#if selectedId}
-				<div class="my-1 text-xs">
+				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1 w-full" />
+
+				<div class="my-2 text-xs">
 					{#if !loading}
-						<div class="chat-control-valves">
-							<Valves
-								{valvesSpec}
-								meta={(tab === 'tools' ? $tools : $functions)?.find(
-									(item) => item.id === selectedId
-								)?.meta}
-								userValves
-								bind:valves
-								on:change={() => {
-									debounceSubmitHandler();
-								}}
-							/>
-						</div>
+						<Valves
+							{valvesSpec}
+							bind:valves
+							on:change={() => {
+								debounceSubmitHandler();
+							}}
+						/>
 					{:else}
 						<Spinner className="size-5" />
 					{/if}
@@ -228,12 +211,3 @@
 {:else}
 	<Spinner className="size-4" />
 {/if}
-
-<style>
-	.chat-control-valves :global(input),
-	.chat-control-valves :global(select),
-	.chat-control-valves :global(textarea) {
-		font-size: 0.75rem;
-		line-height: 1rem;
-	}
-</style>

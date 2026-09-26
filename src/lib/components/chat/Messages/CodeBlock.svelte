@@ -2,40 +2,34 @@
 	import hljs from 'highlight.js';
 	import { toast } from 'svelte-sonner';
 	import { getContext, onMount, tick, onDestroy } from 'svelte';
-	import type { Writable } from 'svelte/store';
-	import type { i18n as i18nType } from 'i18next';
-	import { config, pyodideWorker as pyodideWorkerStore } from '$lib/stores';
+	import { config } from '$lib/stores';
 
-	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
+	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
 	import { executeCode } from '$lib/apis/utils';
 	import {
 		copyToClipboard,
 		initMermaid,
 		renderMermaidDiagram,
-		renderVegaVisualization,
-		unescapeHtml
+		renderVegaVisualization
 	} from '$lib/utils';
 
 	import 'highlight.js/styles/github-dark.min.css';
-	import equal from 'fast-deep-equal';
 
 	import CodeEditor from '$lib/components/common/CodeEditor.svelte';
-	import DiffBlock from './DiffBlock.svelte';
 	import SvgPanZoom from '$lib/components/common/SVGPanZoom.svelte';
 
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import ChevronUpDown from '$lib/components/icons/ChevronUpDown.svelte';
 	import CommandLine from '$lib/components/icons/CommandLine.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
-	const i18n = getContext<Writable<i18nType>>('i18n');
+	const i18n = getContext('i18n');
 
 	export let id = '';
 	export let edit = true;
 
 	export let onSave = (e) => {};
-	export let onUpdate = (e, codeBlockId = '') => {};
+	export let onUpdate = (e) => {};
 	export let onPreview = (e) => {};
 
 	export let save = false;
@@ -52,12 +46,16 @@
 	export let editorClassName = '';
 	export let stickyButtonsClassName = 'top-0';
 
-	let localPyodideWorker = null;
+	let pyodideWorker = null;
 
 	let _code = '';
-	$: _code = code;
-	$: isDiff = ['diff', 'patch'].includes(lang.trim().toLowerCase());
-	let editingDiff = false;
+	$: if (code) {
+		updateCode();
+	}
+
+	const updateCode = () => {
+		_code = code;
+	};
 
 	let _token = null;
 
@@ -233,49 +231,32 @@
 			/\bimport\s+seaborn\b|\bfrom\s+seaborn\b/.test(code) ? 'seaborn' : null,
 			/\bimport\s+sympy\b|\bfrom\s+sympy\b/.test(code) ? 'sympy' : null,
 			/\bimport\s+tiktoken\b|\bfrom\s+tiktoken\b/.test(code) ? 'tiktoken' : null,
-			/\bimport\s+pytz\b|\bfrom\s+pytz\b/.test(code) ? 'pytz' : null,
-			/\bimport\s+openpyxl\b|\bfrom\s+openpyxl\b/.test(code) ? 'openpyxl' : null,
-			/\.(read|to)_excel\(|\.Excel(Writer|File)\(/.test(code) ? 'openpyxl' : null
+			/\bimport\s+pytz\b|\bfrom\s+pytz\b/.test(code) ? 'pytz' : null
 		].filter(Boolean);
 
 		console.log(packages);
 
-		// Reuse the shared Pyodide worker when code interpreter is active,
-		// so files written here are immediately visible in PyodideFileNav.
-		// Otherwise fall back to a throwaway worker.
-		const sharedWorker = $pyodideWorkerStore;
-		const isShared = !!sharedWorker;
-		const worker = sharedWorker ?? createPyodideWorker();
+		pyodideWorker = new PyodideWorker();
 
-		if (!isShared) {
-			localPyodideWorker = worker;
-		}
-
-		worker.postMessage({
+		pyodideWorker.postMessage({
 			id: id,
 			code: code,
 			packages: packages
 		});
 
-		const timeoutId = setTimeout(() => {
+		setTimeout(() => {
 			if (executing) {
 				executing = false;
 				stderr = 'Execution Time Limit Exceeded';
-				if (!isShared) {
-					worker.terminate();
-					localPyodideWorker = null;
-				}
+				pyodideWorker.terminate();
 			}
 		}, 60000);
 
-		const handler = (event) => {
-			// Ignore messages from other requests on the shared worker
-			if (event.data?.id !== id) return;
-
+		pyodideWorker.onmessage = (event) => {
 			console.log('pyodideWorker.onmessage', event);
-			const { id: _id, ...data } = event.data;
+			const { id, ...data } = event.data;
 
-			console.log(_id, data);
+			console.log(id, data);
 
 			if (data['stdout']) {
 				stdout = data['stdout'];
@@ -338,20 +319,11 @@
 			data['stderr'] && (stderr = data['stderr']);
 			data['result'] && (result = data['result']);
 
-			clearTimeout(timeoutId);
-			worker.removeEventListener('message', handler);
 			executing = false;
-
-			// Signal PyodideFileNav to auto-refresh after execution
-			window.dispatchEvent(new Event('pyodide:files'));
 		};
 
-		worker.addEventListener('message', handler);
-
-		worker.onerror = (event) => {
+		pyodideWorker.onerror = (event) => {
 			console.log('pyodideWorker.onerror', event);
-			clearTimeout(timeoutId);
-			worker.removeEventListener('message', handler);
 			executing = false;
 		};
 	};
@@ -365,7 +337,7 @@
 	};
 
 	const render = async () => {
-		onUpdate(token, id);
+		onUpdate(token);
 		if (lang === 'mermaid' && (token?.raw ?? '').slice(-4).includes('```')) {
 			try {
 				renderHTML = await renderMermaid(code);
@@ -380,7 +352,7 @@
 			(token?.raw ?? '').slice(-4).includes('```')
 		) {
 			try {
-				renderHTML = await renderVegaVisualization(code, lang);
+				renderHTML = await renderVegaVisualization(code);
 			} catch (error) {
 				console.error('Failed to render Vega visualization:', error);
 				const errorMsg = error instanceof Error ? error.message : String(error);
@@ -391,9 +363,7 @@
 	};
 
 	$: if (token) {
-		if (token.text !== _token?.text || token.raw !== _token?.raw) {
-			_token = token;
-		} else if (!equal(token, _token)) {
+		if (JSON.stringify(token) !== JSON.stringify(_token)) {
 			_token = token;
 		}
 	}
@@ -408,8 +378,21 @@
 
 	const onAttributesUpdate = () => {
 		if (attributes?.output) {
+			// Create a helper function to unescape HTML entities
+			const unescapeHtml = (html) => {
+				const textArea = document.createElement('textarea');
+				textArea.innerHTML = html;
+				return textArea.value;
+			};
+
 			try {
-				const output = JSON.parse(unescapeHtml(attributes.output));
+				// Unescape the HTML-encoded string
+				const unescapedOutput = unescapeHtml(attributes.output);
+
+				// Parse the unescaped string into JSON
+				const output = JSON.parse(unescapedOutput);
+
+				// Assign the parsed values to variables
 				stdout = output.stdout;
 				stderr = output.stderr;
 				result = output.result;
@@ -421,27 +404,26 @@
 
 	onMount(async () => {
 		if (token) {
-			onUpdate(token, id);
+			onUpdate(token);
 		}
 	});
 
 	onDestroy(() => {
-		if (localPyodideWorker) {
-			localPyodideWorker.terminate();
-			localPyodideWorker = null;
+		if (pyodideWorker) {
+			pyodideWorker.terminate();
 		}
 	});
 </script>
 
 <div>
 	<div
-		class="relative {className} flex flex-col rounded-2xl border border-gray-100/30 dark:border-gray-850/30 my-0.5 overflow-clip"
+		class="relative {className} flex flex-col rounded-3xl border border-gray-100/30 dark:border-gray-850/30 my-0.5"
 		dir="ltr"
 	>
 		{#if ['mermaid', 'vega', 'vega-lite'].includes(lang)}
 			{#if renderHTML}
 				<SvgPanZoom
-					className=" rounded-2xl max-h-fit overflow-hidden"
+					className=" rounded-3xl max-h-fit overflow-hidden"
 					svg={renderHTML}
 					content={_token.text}
 				/>
@@ -459,29 +441,15 @@
 			{/if}
 		{:else}
 			<div
-				class="sticky {stickyButtonsClassName} left-0 right-0 py-1.5 px-3.5 gap-2 flex items-center justify-end w-full z-10 text-xs text-black dark:text-white bg-white dark:bg-black"
+				class="absolute left-0 right-0 py-2.5 pr-3 text-text-300 pl-4.5 text-xs font-medium dark:text-white"
 			>
-				<div class="flex-1 truncate">
-					<Tooltip content={lang} placement="top-start">
-						<span class=" truncate text-ellipsis">
-							{lang}
-						</span>
-					</Tooltip>
-				</div>
+				{lang}
+			</div>
 
-				<div class="flex items-center gap-0.5 shrink-0">
-					{#if isDiff && edit}
-						<button
-							class="bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
-							aria-pressed={editingDiff}
-							on:click={() => {
-								editingDiff = !editingDiff;
-								collapsed = false;
-							}}
-						>
-							{editingDiff ? $i18n.t('Done') : $i18n.t('Edit')}
-						</button>
-					{/if}
+			<div
+				class="sticky {stickyButtonsClassName} left-0 right-0 py-2 pr-3 flex items-center justify-end w-full z-10 text-xs text-black dark:text-white"
+			>
+				<div class="flex items-center gap-0.5">
 					<button
 						class="flex gap-1 items-center bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
 						on:click={collapseCodeBlock}
@@ -546,20 +514,18 @@
 			</div>
 
 			<div
-				class="language-{lang} rounded-t-2xl -mt-8 {editorClassName
+				class="language-{lang} rounded-t-3xl -mt-9 {editorClassName
 					? editorClassName
 					: executing || stdout || stderr || result
 						? ''
-						: 'rounded-b-2xl'} overflow-hidden"
+						: 'rounded-b-3xl'} overflow-hidden"
 			>
-				<div class=" pt-6.5 bg-white dark:bg-black"></div>
+				<div class=" pt-8 bg-white dark:bg-black"></div>
 
 				{#if !collapsed}
-					{#if isDiff && !(edit && editingDiff)}
-						<DiffBlock code={_code} />
-					{:else if edit}
+					{#if edit}
 						<CodeEditor
-							value={_code}
+							value={code}
 							{id}
 							{lang}
 							onSave={() => {
@@ -578,19 +544,17 @@
 								result) &&
 								'border-bottom-left-radius: 0px; border-bottom-right-radius: 0px;'}"><code
 								class="language-{lang} rounded-t-none whitespace-pre text-sm"
-								>{#if lang && hljs.getLanguage(lang)}{@html hljs.highlight(code, {
-										language: lang,
-										ignoreIllegals: true
-									}).value}{:else}{code}{/if}</code
+								>{@html hljs.highlightAuto(code, hljs.getLanguage(lang)?.aliases).value ||
+									code}</code
 							></pre>
 					{/if}
 				{:else}
 					<div
-						class="bg-white dark:bg-black dark:text-white rounded-b-2xl! pt-1 pb-2 px-4 flex flex-col gap-2 text-xs"
+						class="bg-white dark:bg-black dark:text-white rounded-b-3xl! pt-0.5 pb-3 px-4 flex flex-col gap-2 text-xs"
 					>
 						<span class="text-gray-500 italic">
 							{$i18n.t('{{COUNT}} hidden lines', {
-								COUNT: (isDiff ? _code : code).split('\n').length
+								COUNT: code.split('\n').length
 							})}
 						</span>
 					</div>
@@ -605,29 +569,29 @@
 
 				{#if executing || stdout || stderr || result || files}
 					<div
-						class="bg-gray-50 dark:bg-black dark:text-white rounded-b-2xl! pt-2 pb-3 px-3.5 flex flex-col gap-2"
+						class="bg-gray-50 dark:bg-black dark:text-white rounded-b-3xl! py-4 px-4 flex flex-col gap-2"
 					>
 						{#if executing}
 							<div class=" ">
-								<div class=" text-gray-500 text-xs mb-1">{$i18n.t('STDOUT/STDERR')}</div>
+								<div class=" text-gray-500 text-sm mb-1">{$i18n.t('STDOUT/STDERR')}</div>
 								<div class="text-sm">{$i18n.t('Running...')}</div>
 							</div>
 						{:else}
 							{#if stdout || stderr}
 								<div class=" ">
-									<div class=" text-gray-500 text-xs mb-1">{$i18n.t('STDOUT/STDERR')}</div>
+									<div class=" text-gray-500 text-sm mb-1">{$i18n.t('STDOUT/STDERR')}</div>
 									<div
 										class="text-sm font-mono whitespace-pre-wrap {stdout?.split('\n')?.length > 100
 											? `max-h-96`
 											: ''}  overflow-y-auto"
 									>
-										{`${stdout ?? ''}${stderr ?? ''}`}
+										{stdout || stderr}
 									</div>
 								</div>
 							{/if}
 							{#if result || files}
 								<div class=" ">
-									<div class=" text-gray-500 text-xs mb-1">{$i18n.t('RESULT')}</div>
+									<div class=" text-gray-500 text-sm mb-1">{$i18n.t('RESULT')}</div>
 									{#if result}
 										<div class="text-sm">{`${JSON.stringify(result)}`}</div>
 									{/if}

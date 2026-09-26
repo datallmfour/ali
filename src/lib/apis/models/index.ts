@@ -1,16 +1,5 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
-export const exportModels = async (token: string, ids?: string[]) => {
-	const query = new URLSearchParams();
-	(ids ?? []).forEach((id) => query.append('ids', id));
-	if (ids && !ids.length) return [];
-	const response = await fetch(`${WEBUI_API_BASE_URL}/models/export${ids ? `?${query}` : ''}`, {
-		headers: { authorization: `Bearer ${token}` }
-	});
-	if (!response.ok) throw await response.json();
-	return response.json();
-};
-
 export const getModelItems = async (
 	token: string = '',
 	query,
@@ -101,37 +90,6 @@ export const getModelTags = async (token: string = '') => {
 	return res;
 };
 
-export const getBaseModelTags = async (token: string = '') => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/models/base/tags`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = err;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
 export const importModels = async (token: string, models: object[]) => {
 	let error = null;
 
@@ -160,27 +118,10 @@ export const importModels = async (token: string, models: object[]) => {
 	return res;
 };
 
-export const getAllModels = async (token: string = '') => {
-	const res = await fetch(`${WEBUI_API_BASE_URL}/models/all`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-	if (!res.ok) throw await res.json();
-	return res.json();
-};
-
-export const getBaseModels = async (token: string = '', tag: string = '') => {
+export const getBaseModels = async (token: string = '') => {
 	let error = null;
 
-	const searchParams = new URLSearchParams();
-	if (tag) {
-		searchParams.append('tag', tag);
-	}
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/models/base?${searchParams.toString()}`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/models/base`, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -211,9 +152,6 @@ export const getBaseModels = async (token: string = '', tag: string = '') => {
 export const createNewModel = async (token: string, model: object) => {
 	let error = null;
 
-	const { id, base_model_id, name, meta, params, access_grants, is_active } = model as any;
-	const payload = { id, base_model_id, name, meta, params, access_grants, is_active };
-
 	const res = await fetch(`${WEBUI_API_BASE_URL}/models/create`, {
 		method: 'POST',
 		headers: {
@@ -221,7 +159,7 @@ export const createNewModel = async (token: string, model: object) => {
 			'Content-Type': 'application/json',
 			authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify(payload)
+		body: JSON.stringify(model)
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -313,9 +251,6 @@ export const toggleModelById = async (token: string, id: string) => {
 export const updateModelById = async (token: string, id: string, model: object) => {
 	let error = null;
 
-	const { base_model_id, name, meta, params, access_grants, is_active } = model as any;
-	const payload = { id, base_model_id, name, meta, params, access_grants, is_active };
-
 	const res = await fetch(`${WEBUI_API_BASE_URL}/models/model/update`, {
 		method: 'POST',
 		headers: {
@@ -323,7 +258,7 @@ export const updateModelById = async (token: string, id: string, model: object) 
 			'Content-Type': 'application/json',
 			authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify(payload)
+		body: JSON.stringify({ ...model, id })
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -335,40 +270,6 @@ export const updateModelById = async (token: string, id: string, model: object) 
 		.catch((err) => {
 			error = err;
 
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const updateModelAccessGrants = async (
-	token: string,
-	id: string,
-	name: string,
-	accessGrants: any[]
-) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/models/model/access/update`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({ id, name, access_grants: accessGrants })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			error = err;
 			console.error(err);
 			return null;
 		});

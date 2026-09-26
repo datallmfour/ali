@@ -18,7 +18,6 @@
 	export let channel = null;
 
 	export let onClose = () => {};
-	export let onPin = () => {};
 
 	let messages = null;
 	let top = false;
@@ -36,9 +35,7 @@
 	}
 
 	const scrollToBottom = () => {
-		if (messagesContainerElement) {
-			messagesContainerElement.scrollTop = messagesContainerElement.scrollHeight;
-		}
+		messagesContainerElement.scrollTop = messagesContainerElement.scrollHeight;
 	};
 
 	const initHandler = async () => {
@@ -87,22 +84,8 @@
 					}
 				}
 			} else if (type === 'message:delete') {
-				if (data.id === threadId) {
-					onClose();
-				}
-
 				if (messages) {
-					messages = messages
-						.filter((message) => message.id !== data.id)
-						.map((message) =>
-							message?.reply_to_message?.id === data.id
-								? { ...message, reply_to_message: null }
-								: message
-						);
-				}
-
-				if (replyToMessage?.id === data.id) {
-					replyToMessage = null;
+					messages = messages.filter((message) => message.id !== data.id);
 				}
 			} else if (type.includes('message:reaction')) {
 				if (messages) {
@@ -184,7 +167,7 @@
 {#if channel}
 	<div class="flex flex-col w-full h-full bg-gray-50 dark:bg-gray-850">
 		<div class="sticky top-0 flex items-center justify-between px-3.5 py-3">
-			<div class=" font-normal text-lg">{$i18n.t('Thread')}</div>
+			<div class=" font-medium text-lg">{$i18n.t('Thread')}</div>
 
 			<div>
 				<button
@@ -198,67 +181,60 @@
 			</div>
 		</div>
 
-		<div
-			class="flex-1 min-h-0 w-full overflow-y-auto will-change-transform"
-			bind:this={messagesContainerElement}
-		>
-			<div class="pt-7">
-				{#if messages !== null}
-					<Messages
-						id={threadId}
-						{channel}
-						{top}
-						{messages}
-						{replyToMessage}
-						thread={true}
-						{onPin}
-						onReply={async (message) => {
-							replyToMessage = message;
+		<div class=" max-h-full w-full overflow-y-auto" bind:this={messagesContainerElement}>
+			{#if messages !== null}
+				<Messages
+					id={threadId}
+					{channel}
+					{top}
+					{messages}
+					{replyToMessage}
+					thread={true}
+					onReply={async (message) => {
+						replyToMessage = message;
 
-							await tick();
-							chatInputElement?.focus();
-						}}
-						onLoad={async () => {
-							const newMessages = await getChannelThreadMessages(
-								localStorage.token,
-								channel.id,
-								threadId,
-								messages.length
-							);
+						await tick();
+						chatInputElement?.focus();
+					}}
+					onLoad={async () => {
+						const newMessages = await getChannelThreadMessages(
+							localStorage.token,
+							channel.id,
+							threadId,
+							messages.length
+						);
 
-							messages = [...messages, ...newMessages];
+						messages = [...messages, ...newMessages];
 
-							if (newMessages.length < 50) {
-								top = true;
-								return;
-							}
-						}}
-					/>
-				{:else}
-					<div class="w-full flex justify-center pt-5 pb-10">
-						<Spinner />
-					</div>
-				{/if}
+						if (newMessages.length < 50) {
+							top = true;
+							return;
+						}
+					}}
+				/>
+			{:else}
+				<div class="w-full flex justify-center pt-5 pb-10">
+					<Spinner />
+				</div>
+			{/if}
+
+			<div class=" pb-[1rem] px-2.5 w-full">
+				<MessageInput
+					bind:replyToMessage
+					bind:chatInputElement
+					id={threadId}
+					disabled={!channel?.write_access}
+					placeholder={!channel?.write_access
+						? $i18n.t('You do not have permission to send messages in this thread.')
+						: $i18n.t('Reply to thread...')}
+					typingUsersClassName="from-gray-50 dark:from-gray-850"
+					{typingUsers}
+					userSuggestions={true}
+					channelSuggestions={true}
+					{onChange}
+					onSubmit={submitHandler}
+				/>
 			</div>
-		</div>
-
-		<div class=" pb-[1rem] px-2.5 w-full">
-			<MessageInput
-				bind:replyToMessage
-				bind:chatInputElement
-				id={threadId}
-				{channel}
-				disabled={!channel?.write_access}
-				placeholder={!channel?.write_access
-					? $i18n.t('You do not have permission to send messages in this thread.')
-					: $i18n.t('Reply to thread...')}
-				typingUsersClassName="from-gray-50 dark:from-gray-850"
-				{typingUsers}
-				userSuggestions={true}
-				channelSuggestions={true}
-				{onChange}
-				onSubmit={submitHandler}
-			/>
 		</div>
 	</div>
 {/if}
