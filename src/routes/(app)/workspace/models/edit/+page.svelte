@@ -24,12 +24,6 @@
 
 			if (!model) {
 				goto('/workspace/models');
-				return;
-			}
-
-			if (!model?.write_access) {
-				toast.error($i18n.t('You do not have permission to edit this model'));
-				goto('/workspace/models');
 			}
 		} else {
 			goto('/workspace/models');
@@ -40,33 +34,18 @@
 		const res = await updateModelById(localStorage.token, modelInfo.id, modelInfo);
 
 		if (res) {
-			try {
-				await models.set(
-					await getModels(
-						localStorage.token,
-						$config?.features?.enable_direct_connections
-							? ($settings?.directConnections ?? null)
-							: null
-					)
-				);
-				toast.success($i18n.t('Model updated successfully'));
-				await goto('/workspace/models');
-			} catch (error) {
-				toast.error(`${error}`);
-			}
-			return true;
+			await models.set(
+				await getModels(
+					localStorage.token,
+					$config?.features?.enable_direct_connections && ($settings?.directConnections ?? null)
+				)
+			);
+			toast.success($i18n.t('Model updated successfully'));
+			await goto('/workspace/models');
 		}
-		return false;
 	};
 </script>
 
 {#if model}
-	<ModelEditor
-		edit={true}
-		{model}
-		{onSubmit}
-		onBack={async () => {
-			await goto('/workspace/models');
-		}}
-	/>
+	<ModelEditor edit={true} {model} {onSubmit} />
 {/if}
