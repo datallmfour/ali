@@ -1,110 +1,79 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import type { Writable } from 'svelte/store';
-	import type { i18n as i18nType } from 'i18next';
 	import Checkbox from '$lib/components/common/Checkbox.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { marked } from 'marked';
 
-	const i18n: Writable<i18nType> = getContext('i18n');
+	const i18n = getContext('i18n');
 
-	let capabilityLabels;
-	$: capabilityLabels = {
+	const capabilityLabels = {
 		vision: {
-			label: $i18n.t('settings.admin.models.capabilities.vision.label'),
-			description: $i18n.t('settings.admin.models.capabilities.vision.description')
+			label: $i18n.t('Vision'),
+			description: $i18n.t('Model accepts image inputs')
 		},
 		file_upload: {
-			label: $i18n.t('settings.admin.models.capabilities.fileUpload.label'),
-			description: $i18n.t('settings.admin.models.capabilities.fileUpload.description')
-		},
-		file_context: {
-			label: $i18n.t('settings.admin.models.capabilities.fileContext.label'),
-			description: $i18n.t('settings.admin.models.capabilities.fileContext.description')
+			label: $i18n.t('File Upload'),
+			description: $i18n.t('Model accepts file inputs')
 		},
 		web_search: {
-			label: $i18n.t('settings.admin.models.capabilities.webSearch.label'),
-			description: $i18n.t('settings.admin.models.capabilities.webSearch.description')
+			label: $i18n.t('Web Search'),
+			description: $i18n.t('Model can search the web for information')
 		},
 		image_generation: {
-			label: $i18n.t('settings.admin.models.capabilities.imageGeneration.label'),
-			description: $i18n.t('settings.admin.models.capabilities.imageGeneration.description')
+			label: $i18n.t('Image Generation'),
+			description: $i18n.t('Model can generate images based on text prompts')
 		},
 		code_interpreter: {
-			label: $i18n.t('settings.admin.models.capabilities.codeInterpreter.label'),
-			description: $i18n.t('settings.admin.models.capabilities.codeInterpreter.description')
-		},
-		terminal: {
-			label: $i18n.t('settings.admin.models.capabilities.terminal.label'),
-			description: $i18n.t('settings.admin.models.capabilities.terminal.description')
+			label: $i18n.t('Code Interpreter'),
+			description: $i18n.t('Model can execute code and perform calculations')
 		},
 		usage: {
-			label: $i18n.t('settings.admin.models.capabilities.usage.label'),
-			description: $i18n.t('settings.admin.models.capabilities.usage.description')
+			label: $i18n.t('Usage'),
+			description: $i18n.t(
+				'Sends `stream_options: { include_usage: true }` in the request.\nSupported providers will return token usage information in the response when set.'
+			)
 		},
 		citations: {
-			label: $i18n.t('settings.admin.models.capabilities.citations.label'),
-			description: $i18n.t('settings.admin.models.capabilities.citations.description')
+			label: $i18n.t('Citations'),
+			description: $i18n.t('Displays citations in the response')
 		},
 		status_updates: {
-			label: $i18n.t('settings.admin.models.capabilities.statusUpdates.label'),
-			description: $i18n.t('settings.admin.models.capabilities.statusUpdates.description')
-		},
-		memory: {
-			label: $i18n.t('settings.admin.models.capabilities.memory.label'),
-			description: $i18n.t('settings.admin.models.capabilities.memory.description')
-		},
-		builtin_tools: {
-			label: $i18n.t('settings.admin.models.capabilities.builtinTools.label'),
-			description: $i18n.t('settings.admin.models.capabilities.builtinTools.description')
+			label: $i18n.t('Status Updates'),
+			description: $i18n.t('Displays status updates (e.g., web search progress) in the response')
 		}
 	};
 
-	type Capability = keyof typeof capabilityLabels;
-
-	export let capabilities: Partial<Record<Capability, boolean>> = {};
-
-	const setCapability = (capability: Capability, checked: boolean) => {
-		capabilities[capability] = checked;
-		capabilities = capabilities;
-	};
-
-	// Hide file_context when file_upload is disabled
-	$: visibleCapabilities = (Object.keys(capabilityLabels) as Capability[]).filter((cap) => {
-		if (cap === 'file_context' && !capabilities.file_upload) {
-			return false;
-		}
-		return true;
-	});
+	export let capabilities: {
+		vision?: boolean;
+		file_upload?: boolean;
+		web_search?: boolean;
+		image_generation?: boolean;
+		code_interpreter?: boolean;
+		usage?: boolean;
+		citations?: boolean;
+		status_updates?: boolean;
+	} = {};
 </script>
 
 <div>
-	<div class="mb-1.5 text-xs text-gray-400 dark:text-gray-600">
-		{$i18n.t('settings.admin.models.capabilities.title')}
+	<div class="flex w-full justify-between mb-1">
+		<div class=" self-center text-xs font-medium text-gray-500">{$i18n.t('Capabilities')}</div>
 	</div>
-	<div class="grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
-		{#each visibleCapabilities as capability}
-			<div class="flex min-h-6 items-center gap-2.5">
+	<div class="flex items-center mt-2 flex-wrap">
+		{#each Object.keys(capabilityLabels) as capability}
+			<div class=" flex items-center gap-2 mr-3">
 				<Checkbox
-					ariaLabel={$i18n.t(capabilityLabels[capability].label)}
 					state={capabilities[capability] ? 'checked' : 'unchecked'}
 					on:change={(e) => {
-						setCapability(capability, e.detail === 'checked');
+						capabilities[capability] = e.detail === 'checked';
 					}}
 				/>
-				<button
-					type="button"
-					class="min-w-0 cursor-pointer text-left text-xs text-gray-600 dark:text-gray-400"
-					on:click={() => setCapability(capability, !capabilities[capability])}
-				>
-					<Tooltip
-						as="span"
-						className="block min-w-0"
-						content={marked.parse(capabilityLabels[capability].description)}
-					>
-						<span class="block truncate">{$i18n.t(capabilityLabels[capability].label)}</span>
+
+				<div class=" py-0.5 text-sm capitalize">
+					<Tooltip content={marked.parse(capabilityLabels[capability].description)}>
+						{$i18n.t(capabilityLabels[capability].label)}
 					</Tooltip>
-				</button>
+				</div>
 			</div>
 		{/each}
 	</div>
