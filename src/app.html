@@ -2,10 +2,6 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<!-- LICENSE covers this Open WebUI branding surface, including name, logo,
-		visual, textual, symbolic identifiers, metadata, and surrounding UI.
-		Do not alter, remove, obscure, or replace it except as LICENSE permits:
-		https://docs.openwebui.com/license. -->
 		<link rel="icon" type="image/png" href="/static/favicon.png" crossorigin="use-credentials" />
 		<link
 			rel="icon"
@@ -30,7 +26,7 @@
 		<link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
 		<meta
 			name="viewport"
-			content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+			content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
 		/>
 		<meta name="theme-color" content="#171717" />
 		<meta name="robots" content="noindex,nofollow" />
@@ -75,19 +71,6 @@
 					metaThemeColorTag.setAttribute('content', '#171717');
 				}
 
-				// LICENSE covers these Open WebUI splash logo assets.
-				// Do not alter, remove, obscure, or replace them except as LICENSE permits:
-				// https://docs.openwebui.com/license.
-				const preloadHref = document.documentElement.classList.contains('dark')
-					? '/static/splash-dark.png'
-					: '/static/splash.png';
-				const preload = document.createElement('link');
-				preload.rel = 'preload';
-				preload.as = 'image';
-				preload.href = preloadHref;
-				preload.setAttribute('fetchpriority', 'high');
-				document.head.appendChild(preload);
-
 				window.matchMedia('(prefers-color-scheme: dark)').addListener((e) => {
 					if (localStorage.theme === 'system') {
 						if (e.matches) {
@@ -107,11 +90,6 @@
 				logo.id = 'logo';
 				logo.style =
 					'position: absolute; width: auto; height: 6rem; top: 44%; left: 50%; transform: translateX(-50%); display:block;';
-				logo.loading = 'eager';
-				logo.fetchPriority = 'high';
-				// LICENSE covers this Open WebUI splash logo.
-				// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-				// https://docs.openwebui.com/license.
 				logo.src = isDarkMode ? '/static/splash-dark.png' : '/static/splash.png';
 
 				document.addEventListener('DOMContentLoaded', function () {
@@ -157,15 +135,10 @@
 					align-items: center;
 				"
 			>
-				<!-- LICENSE covers this Open WebUI splash logo.
-				Do not alter, remove, obscure, or replace it except as LICENSE permits:
-				https://docs.openwebui.com/license. -->
 				<img
 					id="logo-her"
 					style="width: auto; height: 13rem"
 					src="/static/splash.png"
-					loading="eager"
-					fetchpriority="high"
 					class="animate-pulse-fast"
 				/>
 

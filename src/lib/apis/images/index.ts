@@ -67,20 +67,16 @@ export const updateConfig = async (token: string = '', config: object) => {
 	return res;
 };
 
-export const verifyConnection = async (
-	token: string = '',
-	connection: { engine: string; url: string; key?: string | null }
-) => {
+export const verifyConfigUrl = async (token: string = '') => {
 	let error = null;
 
-	const res = await fetch(`${IMAGES_API_BASE_URL}/verify`, {
-		method: 'POST',
+	const res = await fetch(`${IMAGES_API_BASE_URL}/config/url/verify`, {
+		method: 'GET',
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
 			...(token && { authorization: `Bearer ${token}` })
-		},
-		body: JSON.stringify(connection)
+		}
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -221,63 +217,7 @@ export const imageGenerations = async (token: string = '', prompt: string) => {
 		.catch((err) => {
 			console.error(err);
 			if ('detail' in err) {
-				if (Array.isArray(err.detail)) {
-					error = err.detail.map((e: { msg?: string }) => e.msg || JSON.stringify(e)).join(', ');
-				} else {
-					error = err.detail;
-				}
-			} else {
-				error = 'Server connection failed';
-			}
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const imageEdits = async (
-	token: string = '',
-	images: string | string[],
-	prompt: string,
-	model?: string,
-	size?: string,
-	n?: number,
-	background?: string
-) => {
-	let error = null;
-
-	const res = await fetch(`${IMAGES_API_BASE_URL}/edit`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		},
-		body: JSON.stringify({
-			image: images,
-			prompt,
-			...(model && { model }),
-			...(size && { size }),
-			...(n && { n }),
-			...(background && { background })
-		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			if ('detail' in err) {
-				if (Array.isArray(err.detail)) {
-					error = err.detail.map((e: { msg?: string }) => e.msg || JSON.stringify(e)).join(', ');
-				} else {
-					error = err.detail;
-				}
+				error = err.detail;
 			} else {
 				error = 'Server connection failed';
 			}
