@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
-	import { equalEditorJSON } from '$lib/utils/editorJson';
-	import { showCallOverlay, skills, terminalSkills } from '$lib/stores';
 
 	marked.use({
 		breaks: true,
@@ -38,18 +36,6 @@
 	});
 	turndownService.escape = (string) => string;
 
-	// Produce single newlines between paragraphs instead of double.
-	// TipTap wraps every line in <p> tags; the default Turndown rule emits
-	// \n\n around each paragraph which then required a destructive
-	// replaceAll('\n\n','\n') that also wiped blank lines inside code blocks.
-	// This rule eliminates that hack so <pre><code> content is untouched.
-	turndownService.addRule('singleNewlineParagraphs', {
-		filter: 'p',
-		replacement: function (content) {
-			return '\n' + content + '\n';
-		}
-	});
-
 	// Use turndown-plugin-gfm for proper GFM table support
 	turndownService.use(gfm);
 
@@ -66,19 +52,18 @@
 		filter: 'table',
 		replacement: function (content, node) {
 			// Extract rows
-			const rows = Array.from(node.rows);
+			const rows = Array.from(node.querySelectorAll('tr'));
 			if (rows.length === 0) return content;
 
 			let markdown = '\n';
 
 			rows.forEach((row, rowIndex) => {
-				const cells = Array.from(row.cells);
+				const cells = Array.from(row.querySelectorAll('th, td'));
 				const cellContents = cells.map((cell) => {
 					// Get the text content and clean it up
 					let cellContent = turndownService.turndown(cell.innerHTML).trim();
 					// Remove extra paragraph tags that might be added
 					cellContent = cellContent.replace(/^\n+|\n+$/g, '');
-					cellContent = cellContent.replace(/\n/g, '<br>');
 					return cellContent;
 				});
 
@@ -96,12 +81,6 @@
 		}
 	});
 
-	// Registered after use(gfm) to override its checkbox rule; taskListItems owns the marker.
-	turndownService.addRule('taskItemCheckbox', {
-		filter: (node) => node.nodeName === 'INPUT' && node.getAttribute('type') === 'checkbox',
-		replacement: () => ''
-	});
-
 	turndownService.addRule('taskListItems', {
 		filter: (node) =>
 			node.nodeName === 'LI' &&
@@ -109,41 +88,35 @@
 				node.getAttribute('data-checked') === 'false'),
 		replacement: function (content, node) {
 			const checked = node.getAttribute('data-checked') === 'true';
-			// Trim TipTap's block wrapper; 4-space continuation keeps sublists and fences nested.
-			content = content.trim().replace(/\n(?=.)/g, '\n    ');
+			content = content.replace(/^\s+/, '');
 			return `- [${checked ? 'x' : ' '}] ${content}\n`;
 		}
 	});
 
-	// Convert TipTap mention spans -> serialized mention tags.
+	// Convert TipTap mention spans -> <@id>
 	turndownService.addRule('mentions', {
 		filter: (node) => node.nodeName === 'SPAN' && node.getAttribute('data-type') === 'mention',
 		replacement: (_content, node: HTMLElement) => {
 			const id = node.getAttribute('data-id') || '';
 			// TipTap stores the trigger char in data-mention-suggestion-char (usually "@")
 			const ch = node.getAttribute('data-mention-suggestion-char') || '@';
-			const mentionChar = ch === '/' ? '$' : ch;
-			return `<${mentionChar}${id}>`;
+			// Emit <@id> style, e.g. <@llama3.2:latest>
+			return `<${ch}${id}>`;
 		}
-	});
-
-	turndownService.addRule('underline', {
-		filter: 'u',
-		replacement: (content) => `<u>${content}</u>`
 	});
 
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { createEventDispatcher } from 'svelte';
 
-	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+	const i18n = getContext('i18n');
 	const eventDispatch = createEventDispatcher();
 
-	import { Fragment, DOMParser, Slice, type Node, type Schema } from 'prosemirror-model';
+	import { Fragment, DOMParser } from 'prosemirror-model';
 	import { EditorState, Plugin, PluginKey, TextSelection, Selection } from 'prosemirror-state';
 	import { Decoration, DecorationSet } from 'prosemirror-view';
-	import { Editor, Extension, markInputRule, mergeAttributes } from '@tiptap/core';
+	import { Editor, Extension, mergeAttributes } from '@tiptap/core';
 
-	import { AIAutocompletion, setFollowUpSuggestion } from './RichTextInput/AutoCompletion.js';
+	import { AIAutocompletion } from './RichTextInput/AutoCompletion.js';
 
 	import StarterKit from '@tiptap/starter-kit';
 
@@ -162,36 +135,7 @@
 	import FileHandler from '@tiptap/extension-file-handler';
 	import Typography from '@tiptap/extension-typography';
 	import Highlight from '@tiptap/extension-highlight';
-	import Code from '@tiptap/extension-code';
-	import Italic from '@tiptap/extension-italic';
 	import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
-
-	// WORKAROUND: TipTap's default Code mark input rule regex captures the
-	// character before the opening backtick, causing it to be deleted.
-	// This uses a lookbehind assertion instead so the preceding character is
-	// matched for position but not captured/deleted.
-	// Upstream fix: https://github.com/ueberdosis/tiptap/pull/7124
-	const backtickInputRegex = /(?<=\s|^)`([^`]+)`(?!`)$/;
-	const FixedCode = Code.extend({
-		addInputRules() {
-			return [
-				markInputRule({
-					find: backtickInputRegex,
-					type: this.type
-				})
-			];
-		}
-	});
-
-	// Prompt inputs need literal asterisks preserved, while toolbar-applied italic should still work.
-	const PromptItalic = Italic.extend({
-		addInputRules() {
-			return [];
-		},
-		addPasteRules() {
-			return [];
-		}
-	});
 
 	import Mention from '@tiptap/extension-mention';
 	import FormattingButtons from './RichTextInput/FormattingButtons.svelte';
@@ -225,23 +169,22 @@
 
 	export let documentId = '';
 
-	export let className = 'input-prose min-h-fit h-full';
-	export let placeholder: string | undefined = undefined;
-	let _placeholder = '';
+	export let className = 'input-prose';
+	export let placeholder = $i18n.t('Type here...');
+	let _placeholder = placeholder;
 
-	$: if ((placeholder ?? $i18n.t('Type here...')) !== _placeholder) {
-		setPlaceholder(placeholder ?? $i18n.t('Type here...'));
+	$: if (placeholder !== _placeholder) {
+		setPlaceholder();
 	}
 
-	const setPlaceholder = (value: string) => {
-		_placeholder = value;
+	const setPlaceholder = () => {
+		_placeholder = placeholder;
 		if (editor) {
 			editor?.view.dispatch(editor.state.tr);
 		}
 	};
 
 	export let richText = true;
-	export let autoFormat = true;
 	export let dragHandle = false;
 	export let link = false;
 	export let image = false;
@@ -295,35 +238,6 @@
 		});
 	};
 
-	const getMentionText = ({ node, suggestion }) => {
-		const id = node.attrs.id ?? '';
-		const label = node.attrs.label ?? id;
-		const ch = node.attrs.mentionSuggestionChar ?? suggestion?.char ?? '@';
-		const char = ch === '/' ? '$' : ch;
-		return `${char}${label}`;
-	};
-
-	// Plain-text mode still preserves mention identities from the clipboard's HTML.
-	const plainMentionPaste = (slice: Slice, schema: Schema): Fragment | null => {
-		const nodes: Node[] = [];
-		let hasMention = false;
-		let firstBlock = true;
-		slice.content.descendants((node) => {
-			if (node.isTextblock) {
-				if (!firstBlock) nodes.push(schema.nodes.hardBreak.create());
-				firstBlock = false;
-			}
-			if (node.type.name === 'mention') {
-				hasMention = true;
-				nodes.push(node.mark([]));
-				return false;
-			}
-			if (node.isText) nodes.push(schema.text(node.text!));
-			else if (node.type.name === 'hardBreak') nodes.push(node.mark([]));
-		});
-		return hasMention ? Fragment.fromArray(nodes) : null;
-	};
-
 	export let onSelectionUpdate = (e) => {};
 
 	export let id = '';
@@ -340,66 +254,22 @@
 	export let preserveBreaks = false;
 	export let generateAutoCompletion: Function = async () => null;
 	export let autocomplete = false;
-	export let followUpSuggestion = '';
-
-	$: if (editor && !editor.isDestroyed) {
-		setFollowUpSuggestion(editor.view, followUpSuggestion);
-	}
-
 	export let messageInput = false;
 	export let shiftEnter = false;
 	export let largeTextAsFile = false;
 	export let insertPromptAsRichText = false;
 	export let floatingMenuPlacement = 'bottom-start';
 
-	// Keep focus off the chat input during a call so the call overlay's M shortcut works
-	$: suppressAutoFocus = messageInput && $showCallOverlay;
-
 	let content = null;
 	let htmlValue = '';
 	let jsonValue = '';
 	let mdValue = '';
-
-	const serializeContent = (richText: boolean) => {
-		if (!editor) return;
-
-		htmlValue = editor.getHTML();
-		jsonValue = editor.getJSON();
-
-		if (richText) {
-			mdValue = turndownService
-				.turndown(
-					htmlValue
-						.replace(/<p><\/p>/g, '<br/>')
-						.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
-				)
-				.replace(/\u00a0/g, ' ');
-		} else {
-			mdValue = turndownService
-				.turndown(
-					htmlValue
-						// Replace empty paragraphs with line breaks
-						.replace(/<p><\/p>/g, '<br/>')
-						// Replace multiple spaces with non-breaking spaces
-						.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
-						// Replace tabs with non-breaking spaces (preserve indentation)
-						.replace(/\t/g, '\u00a0\u00a0\u00a0\u00a0') // 1 tab = 4 spaces
-				)
-				// Convert non-breaking spaces back to regular spaces for markdown
-				.replace(/\u00a0/g, ' ');
-		}
-	};
-
-	$: serializeContent(richText);
 
 	let provider: SocketIOCollaborationProvider | null = null;
 
 	let floatingMenuElement: Element | null = null;
 	let bubbleMenuElement: Element | null = null;
 	let element: Element | null = null;
-
-	let pendingUpdate = null;
-	let destroyed = false;
 
 	const options = {
 		throwOnError: false
@@ -546,58 +416,43 @@
 	};
 
 	export const setText = (text: string) => {
-		if (!editor || !editor.view) return;
+		if (!editor) return;
+		text = text.replaceAll('\n\n', '\n');
 
-		if (text === '') {
+		// reset the editor content
+		editor.commands.clearContent();
+
+		const { state, view } = editor;
+		const { schema, tr } = state;
+
+		if (text.includes('\n')) {
+			// Multiple lines: make paragraphs
+			const lines = text.split('\n');
+			// Map each line to a paragraph node (empty lines -> empty paragraph)
+			const nodes = lines.map((line) =>
+				schema.nodes.paragraph.create({}, line ? schema.text(line) : undefined)
+			);
+			// Create a document fragment containing all parsed paragraphs
+			const fragment = Fragment.fromArray(nodes);
+			// Replace current selection with these paragraphs
+			tr.replaceSelectionWith(fragment, false /* don't select new */);
+			view.dispatch(tr);
+		} else if (text === '') {
+			// Empty: replace with empty paragraph using tr
 			editor.commands.clearContent();
 		} else {
-			// Convert each line to a <p>, replacing mention tags with proper
-			// TipTap mention spans that the editor's DOMParser will recognise.
-			const lines = text.split('\n');
-			const htmlContent = lines
-				.map((line) => {
-					if (!line) return '<p></p>';
-					// Escape HTML entities in the line FIRST so we don't corrupt
-					// user text that happens to contain < or >, then re-inject
-					// the mention spans.
-					const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-					// Now replace the escaped mention patterns back into real spans
-					const withMentions = escaped.replace(
-						/&lt;([@#$])([^|&\s]+)(?:\|([^&]*?))?&gt;|&lt;\/([\w.\-:/]+)\|([^&]*?)&gt;/g,
-						(match, ch, id, label, slashSkillId, slashSkillLabel) => {
-							const mentionChar = ch || '$';
-							const mentionId = id || slashSkillId;
-							if (
-								mentionChar === '$' &&
-								![...($skills ?? []), ...($terminalSkills ?? [])].some(
-									(skill) => skill.id === mentionId && skill.is_active
-								)
-							) {
-								return match;
-							}
-							const display = (label || slashSkillLabel)?.length
-								? label || slashSkillLabel
-								: mentionId;
-							return `<span class="mention" data-type="mention" data-id="${mentionId}" data-label="${display}" data-mention-suggestion-char="${mentionChar}">${mentionChar}${display}</span>`;
-						}
-					);
-					return `<p>${withMentions}</p>`;
-				})
-				.join('');
-
-			editor.commands.setContent(htmlContent);
+			// Single line: create paragraph with text
+			const paragraph = schema.nodes.paragraph.create({}, schema.text(text));
+			tr.replaceSelectionWith(paragraph, false);
+			view.dispatch(tr);
 		}
 
 		selectNextTemplate(editor.view.state, editor.view.dispatch);
-
-		// Ensure the editor is still valid before trying to focus
-		if (!suppressAutoFocus) {
-			focus();
-		}
+		focus();
 	};
 
 	export const insertContent = (content) => {
-		if (!editor || !editor.view) return;
+		if (!editor) return;
 		const { state, view } = editor;
 		const { schema, tr } = state;
 
@@ -610,19 +465,8 @@
 		focus();
 	};
 
-	// Convert text to ProseMirror nodes, using hardBreak for newlines
-	const textToNodes = (state, text) => {
-		if (!text.includes('\n')) return state.schema.text(text);
-		const nodes = [];
-		text.split('\n').forEach((line, i) => {
-			if (i > 0) nodes.push(state.schema.nodes.hardBreak.create());
-			if (line) nodes.push(state.schema.text(line));
-		});
-		return nodes;
-	};
-
 	export const replaceVariables = (variables) => {
-		if (!editor || !editor.view) return;
+		if (!editor) return;
 		const { state, view } = editor;
 		const { doc } = state;
 
@@ -655,7 +499,7 @@
 
 		// Apply replacements in reverse order to maintain correct positions
 		replacements.reverse().forEach(({ from, to, text }) => {
-			tr = tr.replaceWith(from, to, text !== '' ? textToNodes(state, text) : []);
+			tr = tr.replaceWith(from, to, text !== '' ? state.schema.text(text) : []);
 		});
 
 		// Only dispatch if there are changes
@@ -664,21 +508,12 @@
 		}
 	};
 
-	export const focus = (options: FocusOptions = {}) => {
-		if (editor && editor.view) {
-			// Check if the editor is destroyed
-			if (editor.isDestroyed) {
-				return;
-			}
-
+	export const focus = () => {
+		if (editor) {
 			try {
-				if (options.preventScroll && editor.view.dom instanceof HTMLElement) {
-					editor.view.dom.focus(options);
-				} else {
-					editor.view.focus();
-					// Scroll to the current selection
-					editor.view.dispatch(editor.view.state.tr.scrollIntoView());
-				}
+				editor.view?.focus();
+				// Scroll to the current selection
+				editor.view?.dispatch(editor.view.state.tr.scrollIntoView());
 			} catch (e) {
 				// sometimes focusing throws an error, ignore
 				console.warn('Error focusing editor', e);
@@ -753,7 +588,7 @@
 			// After updating the state, try to find and select the next template
 			setTimeout(() => {
 				const templateFound = selectNextTemplate(editor.view.state, editor.view.dispatch);
-				if (!templateFound && !suppressAutoFocus) {
+				if (!templateFound) {
 					editor.commands.focus('end');
 				}
 			}, 0);
@@ -769,9 +604,9 @@
 					props: {
 						decorations: (state) => {
 							const { selection } = state;
-							const { isFocused } = this.editor;
+							const { focused } = this.editor;
 
-							if (isFocused || selection.empty) {
+							if (focused || selection.empty) {
 								return null;
 							}
 
@@ -841,41 +676,19 @@
 			}
 		}
 
-		if (collaboration && editable && documentId && socket && user) {
+		if (collaboration && documentId && socket && user) {
 			const { SocketIOCollaborationProvider } = await import('./RichTextInput/Collaboration');
-			if (destroyed) return;
 			provider = new SocketIOCollaborationProvider(documentId, socket, user, content);
 		}
-		if (destroyed) return;
 		editor = new Editor({
 			element: element,
 			extensions: [
 				StarterKit.configure({
-					link: link ? { autolink: autoFormat, linkOnPaste: autoFormat } : false,
-					code: false, // Disabled in favor of FixedCode (see workaround above)
-					...(messageInput ? { italic: false } : {}),
-					// When rich text is on, ListKit + CodeBlockLowlight provide these.
-					// Disable StarterKit's equivalents to avoid duplicate extension names.
-					...(richText
-						? {
-								codeBlock: false,
-								bulletList: false,
-								orderedList: false,
-								listItem: false,
-								listKeymap: false
-							}
-						: {}),
-					// When rich text is off, disable Strike from StarterKit so we can
-					// re-add it below without its Mod-Shift-s shortcut (which conflicts
-					// with the Toggle Sidebar shortcut). When rich text is on, the user
-					// can undo strikethrough via the toolbar, so the shortcut is fine.
-					...(richText ? {} : { strike: false })
+					link: link
 				}),
-				FixedCode,
-				...(messageInput ? [PromptItalic] : []),
 				...(dragHandle ? [ListItemDragHandle] : []),
 				Placeholder.configure({ placeholder: () => _placeholder, showOnlyWhenEditable: false }),
-				...(messageInput ? [] : [SelectionDecoration]),
+				SelectionDecoration,
 
 				...(richText
 					? [
@@ -897,12 +710,6 @@
 					? [
 							Mention.configure({
 								HTMLAttributes: { class: 'mention' },
-								renderText: getMentionText,
-								renderHTML: ({ options, node, suggestion }) => [
-									'span',
-									options.HTMLAttributes,
-									getMentionText({ node, suggestion })
-								],
 								suggestions: suggestions
 							})
 						]
@@ -918,11 +725,11 @@
 							})
 						]
 					: []),
-				...(autocomplete || messageInput
+				...(autocomplete
 					? [
 							AIAutocompletion.configure({
 								generateCompletion: async (text) => {
-									if (!autocomplete || text.trim().length === 0) {
+									if (text.trim().length === 0) {
 										return null;
 									}
 
@@ -940,72 +747,59 @@
 					? [
 							BubbleMenu.configure({
 								element: bubbleMenuElement,
-								appendTo: () => document.body,
-								options: {
-									strategy: 'fixed',
+								tippyOptions: {
+									duration: 100,
+									arrow: false,
 									placement: 'top',
-									offset: 2
-								},
-								shouldShow: ({ editor, view, state, oldState, from, to }) => {
-									// safety check
-									if (!editor || !editor.view || editor.isDestroyed) {
-										return false;
-									}
-									// Only show when editor is focused and text is selected
-									return view.hasFocus() && from !== to;
+									theme: 'transparent',
+									offset: [0, 2]
 								}
 							}),
 							FloatingMenu.configure({
 								element: floatingMenuElement,
-								appendTo: () => document.body,
-								options: {
-									strategy: 'fixed',
+								tippyOptions: {
+									duration: 100,
+									arrow: false,
 									placement: floatingMenuPlacement,
-									offset: 4
-								},
-								shouldShow: ({ editor, view, state, oldState }) => {
-									// safety check
-									if (!editor || !editor.view || editor.isDestroyed) {
-										return false;
-									}
-									const { selection } = state;
-									const { $anchor, empty } = selection;
-									const isRootDepth = $anchor.depth === 1;
-									const isEmptyTextBlock =
-										$anchor.parent.isTextblock &&
-										!$anchor.parent.type.spec.code &&
-										!$anchor.parent.textContent &&
-										$anchor.parent.childCount === 0;
-
-									// Only show on empty paragraphs at root depth
-									return (
-										view.hasFocus() && empty && isRootDepth && isEmptyTextBlock && editor.isEditable
-									);
+									theme: 'transparent',
+									offset: [-12, 4]
 								}
 							})
 						]
 					: []),
 				...(collaboration && provider ? [provider.getEditorExtension()] : [])
 			],
-			content: provider ? undefined : content,
-			autofocus: messageInput && !$showCallOverlay,
-			onTransaction: ({ transaction }) => {
+			content: collaboration ? undefined : content,
+			autofocus: messageInput ? true : false,
+			onTransaction: () => {
+				// force re-render so `editor.isActive` works as expected
+				editor = editor;
 				if (!editor) return;
 
-				// Defer Svelte reactivity trigger to rAF so we don't interleave
-				// DOM reads/writes with ProseMirror's updateStateInner.
-				if (!pendingUpdate) {
-					pendingUpdate = requestAnimationFrame(() => {
-						pendingUpdate = null;
-						if (editor && !editor.isDestroyed) {
-							editor = editor;
-						}
-					});
-				}
+				htmlValue = editor.getHTML();
+				jsonValue = editor.getJSON();
 
-				// Compare the final document to include changes from appended transactions.
-				if (jsonValue === '' || transaction.before !== editor.state.doc) {
-					serializeContent(richText);
+				if (richText) {
+					mdValue = turndownService
+						.turndown(
+							htmlValue
+								.replace(/<p><\/p>/g, '<br/>')
+								.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
+						)
+						.replace(/\u00a0/g, ' ');
+				} else {
+					mdValue = turndownService
+						.turndown(
+							htmlValue
+								// Replace empty paragraphs with line breaks
+								.replace(/<p><\/p>/g, '<br/>')
+								// Replace multiple spaces with non-breaking spaces
+								.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
+								// Replace tabs with non-breaking spaces (preserve indentation)
+								.replace(/\t/g, '\u00a0\u00a0\u00a0\u00a0') // 1 tab = 4 spaces
+						)
+						// Convert non-breaking spaces back to regular spaces for markdown
+						.replace(/\u00a0/g, ' ');
 				}
 
 				onChange({
@@ -1013,7 +807,6 @@
 					json: jsonValue,
 					md: mdValue
 				});
-				if (transaction.getMeta('paste')) eventDispatch('pasted');
 
 				if (json) {
 					value = jsonValue;
@@ -1021,8 +814,12 @@
 					if (raw) {
 						value = htmlValue;
 					} else {
-						if (value !== (preserveBreaks ? mdValue : mdValue.replace(/<br\/>/g, ''))) {
-							value = preserveBreaks ? mdValue : mdValue.replace(/<br\/>/g, '');
+						if (!preserveBreaks) {
+							mdValue = mdValue.replace(/<br\/>/g, '');
+						}
+
+						if (value !== mdValue) {
+							value = mdValue;
 
 							// check if the node is paragraph as well
 							if (editor.isActive('paragraph')) {
@@ -1035,49 +832,11 @@
 				}
 			},
 			editorProps: {
-				// the tiptap placeholder never becomes the field's accessible name;
-				// function form so a placeholder change is picked up after mount
-				attributes: () => ({ id, 'aria-label': _placeholder }),
-				transformPasted: (slice) => {
-					const stripMentionLinks = (fragment: Fragment): Fragment => {
-						const nodes: Node[] = [];
-						fragment.forEach((node) => {
-							nodes.push(
-								node.type.name === 'mention'
-									? node.mark(
-											node.marks.filter((mark) => !['link', 'underline'].includes(mark.type.name))
-										)
-									: node.isLeaf
-										? node
-										: node.copy(stripMentionLinks(node.content))
-							);
-						});
-						return Fragment.fromArray(nodes);
-					};
-					return new Slice(stripMentionLinks(slice.content), slice.openStart, slice.openEnd);
-				},
-				handleDrop: (view, event) => {
-					// Intercept sidebar chat item drops to prevent ProseMirror
-					// from inserting the raw JSON as text. The actual handling
-					// (adding as Reference Chat) is done by MessageInput's onDrop.
-					const textData = event.dataTransfer?.getData('text/plain');
-					if (textData) {
-						try {
-							const data = JSON.parse(textData);
-							if (data.type === 'chat' && data.id) {
-								// Swallow the drop — let the parent handler deal with it
-								return true;
-							}
-						} catch (_) {
-							// Not JSON, let ProseMirror handle normally
-						}
-					}
-					return false;
-				},
-				handlePaste: (view, event, slice) => {
-					// Paste literal text when automatic formatting is disabled.
-					if (!richText || !autoFormat) {
-						// Discard formatting while retaining explicit mention identities.
+				attributes: { id },
+				handlePaste: (view, event) => {
+					// Force plain-text pasting when richText === false
+					if (!richText) {
+						// swallow HTML completely
 						event.preventDefault();
 						const { state, dispatch } = view;
 
@@ -1085,22 +844,6 @@
 							/\r\n/g,
 							'\n'
 						);
-
-						if (state.selection.$from.parent.type.spec.code) {
-							dispatch(state.tr.insertText(plainText).scrollIntoView());
-							return true;
-						}
-
-						const mentions = plainMentionPaste(slice, state.schema);
-						if (mentions) {
-							dispatch(
-								state.tr
-									.replaceWith(state.selection.from, state.selection.to, mentions)
-									.setMeta('paste', true)
-									.scrollIntoView()
-							);
-							return true;
-						}
 
 						const lines = plainText.split('\n');
 						const nodes = [];
@@ -1115,12 +858,7 @@
 						});
 
 						const fragment = Fragment.fromArray(nodes);
-						dispatch(
-							state.tr
-								.replaceWith(state.selection.from, state.selection.to, fragment)
-								.setMeta('paste', true)
-								.scrollIntoView()
-						);
+						dispatch(state.tr.replaceSelectionWith(fragment, false).scrollIntoView());
 
 						return true; // handled
 					}
@@ -1134,34 +872,6 @@
 					},
 					compositionend: (view, event) => {
 						oncompositionend(event);
-						return false;
-					},
-					beforeinput: (view, event) => {
-						// Workaround for Gboard's clipboard suggestion strip which sends
-						// multi-line pastes as 'insertText' rather than a standard paste event.
-						// Manually insert with hard breaks to preserve multi-line formatting.
-						const isAndroid = /Android/i.test(navigator.userAgent);
-						if (isAndroid && event.inputType === 'insertText' && event.data?.includes('\n')) {
-							event.preventDefault();
-
-							const { state, dispatch } = view;
-							const { from, to } = state.selection;
-							const lines = event.data.split('\n');
-							const nodes = [];
-
-							lines.forEach((line, index) => {
-								if (index > 0) {
-									nodes.push(state.schema.nodes.hardBreak.create());
-								}
-								if (line.length > 0) {
-									nodes.push(state.schema.text(line));
-								}
-							});
-
-							const fragment = Fragment.fromArray(nodes);
-							dispatch(state.tr.replaceWith(from, to, fragment).scrollIntoView());
-							return true;
-						}
 						return false;
 					},
 					focus: (view, event) => {
@@ -1304,7 +1014,7 @@
 									});
 
 									const fragment = Fragment.fromArray(nodes);
-									const tr = state.tr.replaceWith(from, to, fragment).setMeta('paste', true);
+									const tr = state.tr.replaceWith(from, to, fragment);
 									dispatch(tr.scrollIntoView());
 									event.preventDefault();
 									return true;
@@ -1360,20 +1070,8 @@
 				}
 			},
 			onSelectionUpdate: onSelectionUpdate,
-			onBlur: () => {
-				// Force-hide floating menus when editor loses focus.
-				// shouldShow alone isn't enough because it only runs on transactions.
-				if (bubbleMenuElement) {
-					bubbleMenuElement.style.visibility = 'hidden';
-					bubbleMenuElement.style.opacity = '0';
-				}
-				if (floatingMenuElement) {
-					floatingMenuElement.style.visibility = 'hidden';
-					floatingMenuElement.style.opacity = '0';
-				}
-			},
-			enableInputRules: richText && autoFormat,
-			enablePasteRules: richText && autoFormat
+			enableInputRules: richText,
+			enablePasteRules: richText
 		});
 
 		provider?.setEditor(editor, () => ({ md: mdValue, html: htmlValue, json: jsonValue }));
@@ -1384,11 +1082,6 @@
 	});
 
 	onDestroy(() => {
-		destroyed = true;
-		if (pendingUpdate) {
-			cancelAnimationFrame(pendingUpdate);
-		}
-
 		if (provider) {
 			provider.destroy();
 		}
@@ -1405,9 +1098,7 @@
 	const onValueChange = () => {
 		if (!editor) return;
 
-		if (value !== '' && value === jsonValue) return;
-
-		const editorJsonValue = editor.getJSON();
+		const jsonValue = editor.getJSON();
 		const htmlValue = editor.getHTML();
 		let mdValue = turndownService
 			.turndown(
@@ -1426,7 +1117,7 @@
 		}
 
 		if (json) {
-			if (!equalEditorJSON(value, editorJsonValue)) {
+			if (JSON.stringify(value) !== JSON.stringify(jsonValue)) {
 				editor.commands.setContent(value);
 				selectTemplate();
 			}
@@ -1454,27 +1145,18 @@
 </script>
 
 {#if richText && showFormattingToolbar}
-	<div
-		bind:this={bubbleMenuElement}
-		id="bubble-menu"
-		class="p-0"
-		style="visibility: hidden; opacity: 0; position: absolute; z-index: 9999;"
-	>
+	<div bind:this={bubbleMenuElement} id="bubble-menu" class="p-0 {editor ? '' : 'hidden'}">
 		<FormattingButtons {editor} />
 	</div>
 
-	<div
-		bind:this={floatingMenuElement}
-		id="floating-menu"
-		class="p-0"
-		style="visibility: hidden; opacity: 0; position: absolute; z-index: 9999;"
-	>
+	<div bind:this={floatingMenuElement} id="floating-menu" class="p-0 {editor ? '' : 'hidden'}">
 		<FormattingButtons {editor} />
 	</div>
 {/if}
 
 <div
 	bind:this={element}
-	dir="auto"
-	class="relative w-full min-w-full {className} {!editable ? 'cursor-not-allowed' : ''}"
+	class="relative w-full min-w-full h-full min-h-fit {className} {!editable
+		? 'cursor-not-allowed'
+		: ''}"
 />

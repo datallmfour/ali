@@ -23,9 +23,6 @@
 		const manifest = extractFrontmatter(data.content);
 		if (compareVersion(manifest?.required_open_webui_version ?? '0.0.0', WEBUI_VERSION)) {
 			console.log('Version is lower than required');
-			// LICENSE covers this Open WebUI wordmark.
-			// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-			// https://docs.openwebui.com/license.
 			toast.error(
 				$i18n.t(
 					'Open WebUI version (v{{OPEN_WEBUI_VERSION}}) is lower than required version (v{{REQUIRED_VERSION}})',
@@ -42,8 +39,7 @@
 			id: data.id,
 			name: data.name,
 			meta: data.meta,
-			content: data.content,
-			commit_message: data.commit_message
+			content: data.content
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
@@ -55,23 +51,15 @@
 			models.set(
 				await getModels(
 					localStorage.token,
-					$config?.features?.enable_direct_connections
-						? ($settings?.directConnections ?? null)
-						: null,
+					$config?.features?.enable_direct_connections && ($settings?.directConnections ?? null),
 					false,
 					true
 				)
 			);
 		}
-		return res;
 	};
 
 	onMount(async () => {
-		if (!$config?.features?.enable_functions) {
-			goto('/admin', { replaceState: true });
-			return;
-		}
-
 		console.log('mounted');
 		const id = $page.url.searchParams.get('id');
 
@@ -88,28 +76,16 @@
 </script>
 
 {#if func}
-	<div class="px-[1rem] h-full min-w-0 overflow-x-hidden">
+	<div class="px-[16px] h-full">
 		<FunctionEditor
 			edit={true}
 			id={func.id}
 			name={func.name}
 			meta={func.meta}
 			content={func.content}
-			version_id={func.version_id}
-			onProduction={async () => {
-				functions.set(await getFunctions(localStorage.token));
-				models.set(
-					await getModels(
-						localStorage.token,
-						$config?.features?.enable_direct_connections
-							? ($settings?.directConnections ?? null)
-							: null,
-						false,
-						true
-					)
-				);
+			onSave={(value) => {
+				saveHandler(value);
 			}}
-			onSave={saveHandler}
 		/>
 	</div>
 {:else}
