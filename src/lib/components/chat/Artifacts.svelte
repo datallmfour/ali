@@ -1,20 +1,18 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { onMount, getContext, createEventDispatcher } from 'svelte';
-	const i18n: any = getContext('i18n');
+	const i18n = getContext('i18n');
 	const dispatch = createEventDispatcher();
 
 	import {
 		artifactCode,
 		chatId,
-		config,
 		settings,
 		showArtifacts,
 		showControls,
 		artifactContents
 	} from '$lib/stores';
 	import { copyToClipboard, createMessagesList } from '$lib/utils';
-	import { injectCsp } from '$lib/utils/csp';
 
 	import XMark from '../icons/XMark.svelte';
 	import ArrowsPointingOut from '../icons/ArrowsPointingOut.svelte';
@@ -92,35 +90,24 @@
 	};
 
 	onMount(() => {
-		const unsubscribeArtifactContents = artifactContents.subscribe((value) => {
-			const newContents = value ?? [];
-			console.log('Artifact contents updated:', newContents);
-
-			if (newContents.length === 0) {
-				showControls.set(false);
-				showArtifacts.set(false);
-				selectedContentIdx = 0;
-			} else if (newContents.length > contents.length) {
-				selectedContentIdx = newContents.length - 1;
-			} else if (selectedContentIdx > newContents.length - 1) {
-				selectedContentIdx = newContents.length - 1;
-			}
-
-			contents = newContents;
-		});
-
-		const unsubscribeArtifactCode = artifactCode.subscribe((value) => {
-			if (contents && value) {
+		artifactCode.subscribe((value) => {
+			if (contents) {
 				const codeIdx = contents.findIndex((content) => content.content.includes(value));
 				selectedContentIdx = codeIdx !== -1 ? codeIdx : 0;
 			}
 		});
 
-		return () => {
-			unsubscribeArtifactCode();
-			unsubscribeArtifactContents();
-			artifactCode.set(null);
-		};
+		artifactContents.subscribe((value) => {
+			contents = value;
+			console.log('Artifact contents updated:', contents);
+
+			if (contents.length === 0) {
+				showControls.set(false);
+				showArtifacts.set(false);
+			}
+
+			selectedContentIdx = contents ? contents.length - 1 : 0;
+		});
 	});
 </script>
 
@@ -137,7 +124,6 @@
 					<div class="flex items-center space-x-2">
 						<div class="flex items-center gap-0.5 self-center min-w-fit" dir="ltr">
 							<button
-								aria-label={$i18n.t('Previous version')}
 								class="self-center p-1 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-white hover:text-black rounded-md transition disabled:cursor-not-allowed"
 								on:click={() => navigateContent('prev')}
 								disabled={contents.length <= 1}
@@ -166,7 +152,6 @@
 							</div>
 
 							<button
-								aria-label={$i18n.t('Next version')}
 								class="self-center p-1 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-white hover:text-black rounded-md transition disabled:cursor-not-allowed"
 								on:click={() => navigateContent('next')}
 								disabled={contents.length <= 1}
@@ -191,7 +176,7 @@
 
 					<div class="flex items-center gap-1.5">
 						<button
-							class="bg-none border-none text-xs bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
+							class="copy-code-button bg-none border-none text-xs bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
 							on:click={() => {
 								copyToClipboard(contents[selectedContentIdx].content);
 								copied = true;
@@ -204,7 +189,6 @@
 
 						<Tooltip content={$i18n.t('Download')}>
 							<button
-								aria-label={$i18n.t('Download')}
 								class=" bg-none border-none text-xs bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md p-0.5"
 								on:click={downloadArtifact}
 							>
@@ -215,7 +199,6 @@
 						{#if contents[selectedContentIdx].type === 'iframe'}
 							<Tooltip content={$i18n.t('Open in full screen')}>
 								<button
-									aria-label={$i18n.t('Open in full screen')}
 									class=" bg-none border-none text-xs bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md p-0.5"
 									on:click={showFullScreen}
 								>
@@ -227,7 +210,6 @@
 				</div>
 
 				<button
-					aria-label={$i18n.t('Close')}
 					class="self-center pointer-events-auto p-1 rounded-full bg-white dark:bg-gray-850"
 					on:click={() => {
 						dispatch('close');
@@ -251,17 +233,10 @@
 						{#if contents[selectedContentIdx].type === 'iframe'}
 							<iframe
 								bind:this={iframeElement}
-								title={$i18n.t('Content')}
-								srcdoc={injectCsp(
-									contents[selectedContentIdx].content,
-									$config?.ui?.iframe_csp ?? ''
-								)}
+								title="Content"
+								srcdoc={contents[selectedContentIdx].content}
 								class="w-full border-0 h-full rounded-none"
-								sandbox="{($settings?.iframeSandboxAllowScripts ?? true)
-									? 'allow-scripts'
-									: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
-									? ' allow-downloads'
-									: ''}{($settings?.iframeSandboxAllowForms ?? true)
+								sandbox="allow-scripts allow-downloads{($settings?.iframeSandboxAllowForms ?? false)
 									? ' allow-forms'
 									: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false)
 									? ' allow-same-origin'
@@ -276,7 +251,7 @@
 						{/if}
 					</div>
 				{:else}
-					<div class="m-auto font-normal text-xs text-gray-900 dark:text-white">
+					<div class="m-auto font-medium text-xs text-gray-900 dark:text-white">
 						{$i18n.t('No HTML, CSS, or JavaScript content found.')}
 					</div>
 				{/if}

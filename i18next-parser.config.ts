@@ -1,5 +1,10 @@
 // i18next-parser.config.ts
-import languages from './src/lib/i18n/locales/languages.json';
+import { getLanguages } from './src/lib/i18n/index.ts';
+
+const getLangCodes = async () => {
+	const languages = await getLanguages();
+	return languages.map((l) => l.code);
+};
 
 export default {
 	contextSeparator: '_',
@@ -17,11 +22,11 @@ export default {
 		default: ['JavascriptLexer']
 	},
 	lineEnding: 'auto',
-	locales: languages.map(({ code }) => code),
+	locales: await getLangCodes(),
 	namespaceSeparator: false,
 	output: 'src/lib/i18n/locales/$LOCALE/$NAMESPACE.json',
 	pluralSeparator: '_',
-	input: 'src/**/*.{js,ts,svelte}',
+	input: 'src/**/*.{js,svelte}',
 	sort: true,
 	verbose: true,
 	failOnWarnings: false,

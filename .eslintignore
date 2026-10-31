@@ -11,7 +11,3 @@ node_modules
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
-
-# Generated and checksum-verified crypto distribution
-src/lib/encryption/vendor/
-crypto/encryption/target/

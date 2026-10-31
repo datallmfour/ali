@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
 
 	import { socket, user } from '$lib/stores';
 
@@ -19,11 +18,8 @@
 	export let channel = null;
 
 	export let onClose = () => {};
-	export let onPin = () => {};
 
 	let messages = null;
-	let searchAnchor = '';
-	let loading = null;
 	let top = false;
 
 	let messagesContainerElement = null;
@@ -35,53 +31,29 @@
 	let typingUsersTimeout = {};
 
 	$: if (threadId) {
-		initHandler(
-			$page.url.searchParams.get('thread') === threadId
-				? ($page.url.searchParams.get('message') ?? '')
-				: ''
-		);
+		initHandler();
 	}
 
 	const scrollToBottom = () => {
-		if (messagesContainerElement) {
-			messagesContainerElement.scrollTop = messagesContainerElement.scrollHeight;
-		}
+		messagesContainerElement.scrollTop = messagesContainerElement.scrollHeight;
 	};
 
-	const initHandler = async (anchor = '') => {
-		loading = null;
-		searchAnchor = anchor;
+	const initHandler = async () => {
 		messages = null;
 		top = false;
-		replyToMessage = null;
 
 		typingUsers = [];
 		typingUsersTimeout = {};
 
 		if (channel) {
-			loading = getChannelThreadMessages(localStorage.token, channel.id, threadId, 0, 50, {
-				around: anchor
-			}).catch((error) => {
-				if (request === loading) toast.error(String(error));
-				return [];
-			});
-			const request = loading;
-			const loaded = await request;
-			if (request !== loading) return;
-			messages = loaded ?? [];
+			messages = await getChannelThreadMessages(localStorage.token, channel.id, threadId);
 
 			if (messages.length < 50) {
 				top = true;
 			}
 
 			await tick();
-			if (anchor) {
-				const element = document.getElementById(`message-${threadId}-${anchor}`);
-				element?.scrollIntoView({ block: 'center' });
-				element?.animate([{ backgroundColor: '#a5a5c544' }, { backgroundColor: 'transparent' }], {
-					duration: 2200
-				});
-			} else scrollToBottom();
+			scrollToBottom();
 		} else {
 			goto('/');
 		}
@@ -93,16 +65,10 @@
 			const type = event?.data?.type ?? null;
 			const data = event?.data?.data ?? null;
 
-			if (messages === null && type !== 'typing') {
-				const request = loading;
-				await request;
-				if (request !== loading) return;
-			}
-
 			if (type === 'message') {
 				if ((data?.parent_id ?? null) === threadId) {
-					if (messages && !messages.some((message) => message.id === data.id)) {
-						messages = [{ ...data, temp_id: null }, ...messages];
+					if (messages) {
+						messages = [data, ...messages];
 
 						if (typingUsers.find((user) => user.id === event.user.id)) {
 							typingUsers = typingUsers.filter((user) => user.id !== event.user.id);
@@ -118,22 +84,8 @@
 					}
 				}
 			} else if (type === 'message:delete') {
-				if (data.id === threadId) {
-					onClose();
-				}
-
 				if (messages) {
-					messages = messages
-						.filter((message) => message.id !== data.id)
-						.map((message) =>
-							message?.reply_to_message?.id === data.id
-								? { ...message, reply_to_message: null }
-								: message
-						);
-				}
-
-				if (replyToMessage?.id === data.id) {
-					replyToMessage = null;
+					messages = messages.filter((message) => message.id !== data.id);
 				}
 			} else if (type.includes('message:reaction')) {
 				if (messages) {
@@ -172,32 +124,22 @@
 		}
 	};
 
-	const submitHandler = async ({
-		content,
-		data,
-		channel_id,
-		parent_id,
-		reply_to_message
-	}: {
-		content: string;
-		data: any;
-		channel_id: string;
-		parent_id: string | null;
-		reply_to_message: any;
-	}) => {
+	const submitHandler = async ({ content, data }) => {
 		if (!content && (data?.files ?? []).length === 0) {
 			return;
 		}
 
-		const res = await sendMessage(localStorage.token, channel_id, {
-			parent_id: parent_id ?? undefined,
-			reply_to_id: reply_to_message?.id ?? null,
+		const res = await sendMessage(localStorage.token, channel.id, {
+			parent_id: threadId,
+			reply_to_id: replyToMessage?.id ?? null,
 			content: content,
 			data: data
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
 		});
+
+		replyToMessage = null;
 	};
 
 	const onChange = async () => {
@@ -218,107 +160,81 @@
 	});
 
 	onDestroy(() => {
-		loading = null;
 		$socket?.off('events:channel', channelEventHandler);
 	});
 </script>
 
 {#if channel}
-	<div class="flex flex-col w-full h-full bg-white dark:bg-gray-900">
-		<div
-			class="sticky top-0 flex min-h-10 items-center justify-between border-b border-gray-100/60 px-4 py-1.5 dark:border-gray-800/40"
-		>
-			<div class=" font-medium text-sm">{$i18n.t('Thread')}</div>
+	<div class="flex flex-col w-full h-full bg-gray-50 dark:bg-gray-850">
+		<div class="sticky top-0 flex items-center justify-between px-3.5 py-3">
+			<div class=" font-medium text-lg">{$i18n.t('Thread')}</div>
 
 			<div>
 				<button
-					type="button"
-					aria-label={$i18n.t('Close')}
-					class="flex size-7 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-50/60 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-300"
+					class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 p-2"
 					on:click={() => {
 						onClose();
 					}}
 				>
-					<XMark className="size-4" />
+					<XMark />
 				</button>
 			</div>
 		</div>
 
-		<div
-			class="flex-1 min-h-0 w-full overflow-y-auto will-change-transform"
-			bind:this={messagesContainerElement}
-		>
-			<div class="pt-3">
-				{#if searchAnchor}<div class="px-3 py-2 text-xs text-gray-500 flex justify-between">
-						<span>{$i18n.t('Showing search match')}</span><button
-							class="underline"
-							on:click={() => initHandler()}>{$i18n.t('Latest replies')}</button
-						>
-					</div>{/if}
-				{#if messages !== null}
-					<Messages
-						id={threadId}
-						{channel}
-						{top}
-						bind:messages
-						{replyToMessage}
-						thread={true}
-						{onPin}
-						onReply={async (message) => {
-							replyToMessage = message;
+		<div class=" max-h-full w-full overflow-y-auto" bind:this={messagesContainerElement}>
+			{#if messages !== null}
+				<Messages
+					id={threadId}
+					{channel}
+					{top}
+					{messages}
+					{replyToMessage}
+					thread={true}
+					onReply={async (message) => {
+						replyToMessage = message;
 
-							await tick();
-							chatInputElement?.focus();
-						}}
-						onLoad={async () => {
-							const newMessages = await getChannelThreadMessages(
-								localStorage.token,
-								channel.id,
-								threadId,
-								searchAnchor ? 0 : messages.length,
-								50,
-								searchAnchor ? { before: messages[messages.length - 1]?.id } : {}
-							);
+						await tick();
+						chatInputElement?.focus();
+					}}
+					onLoad={async () => {
+						const newMessages = await getChannelThreadMessages(
+							localStorage.token,
+							channel.id,
+							threadId,
+							messages.length
+						);
 
-							messages = [
-								...messages,
-								...newMessages.filter(
-									(item) => !messages.some((existing) => existing.id === item.id)
-								)
-							];
+						messages = [...messages, ...newMessages];
 
-							if (newMessages.length < 50) {
-								top = true;
-								return;
-							}
-						}}
-					/>
-				{:else}
-					<div class="w-full flex justify-center pt-5 pb-10">
-						<Spinner />
-					</div>
-				{/if}
+						if (newMessages.length < 50) {
+							top = true;
+							return;
+						}
+					}}
+				/>
+			{:else}
+				<div class="w-full flex justify-center pt-5 pb-10">
+					<Spinner />
+				</div>
+			{/if}
+
+			<div class=" pb-[1rem] px-2.5 w-full">
+				<MessageInput
+					bind:replyToMessage
+					bind:chatInputElement
+					id={threadId}
+					disabled={!channel?.write_access}
+					placeholder={!channel?.write_access
+						? $i18n.t('You do not have permission to send messages in this thread.')
+						: $i18n.t('Reply to thread...')}
+					typingUsersClassName="from-gray-50 dark:from-gray-850"
+					{typingUsers}
+					userSuggestions={true}
+					channelSuggestions={true}
+					{onChange}
+					onSubmit={submitHandler}
+				/>
 			</div>
-		</div>
-
-		<div class=" pb-3 px-3 w-full">
-			<MessageInput
-				{messages}
-				bind:replyToMessage
-				bind:chatInputElement
-				id={threadId}
-				{channel}
-				disabled={!channel?.write_access}
-				placeholder={!channel?.write_access
-					? $i18n.t('You do not have permission to send messages in this thread.')
-					: $i18n.t('Reply to thread...')}
-				typingUsersClassName="from-white dark:from-gray-900"
-				{typingUsers}
-				userSuggestions={true}
-				channelSuggestions={true}
-				{onChange}
-				onSubmit={submitHandler}
-			/>
 		</div>
 	</div>
 {/if}

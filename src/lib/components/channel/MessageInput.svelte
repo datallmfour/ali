@@ -2,32 +2,13 @@
 	import { toast } from 'svelte-sonner';
 	import { v4 as uuidv4 } from 'uuid';
 
-	import { tick, getContext, onMount } from 'svelte';
-	import { get } from 'svelte/store';
+	import { tick, getContext, onMount, onDestroy } from 'svelte';
 
-	const i18n: any = getContext('i18n');
+	const i18n = getContext('i18n');
 
-	import {
-		channelRequestQueues,
-		channels,
-		models,
-		config,
-		mobile,
-		settings,
-		socket,
-		user
-	} from '$lib/stores';
-	import { processingQueueChannels, processNextInQueue } from '$lib/utils/channelQueue';
-	import {
-		getMentionUserQueries,
-		resolveMentions,
-		getChannelMentionCandidates
-	} from '$lib/utils/channelMentions';
-	import type { Editor } from '@tiptap/core';
-	import QueuedMessageItem from '../chat/MessageInput/QueuedMessageItem.svelte';
+	import { config, mobile, settings, socket, user } from '$lib/stores';
 	import {
 		convertHeicToJpeg,
-		isHeicImage,
 		compressImage,
 		extractInputVariables,
 		getAge,
@@ -43,7 +24,7 @@
 	import { getSessionUser } from '$lib/apis/auths';
 
 	import { uploadFile } from '$lib/apis/files';
-	import { WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
 	import CommandSuggestionList from '../chat/MessageInput/CommandSuggestionList.svelte';
@@ -60,12 +41,10 @@
 	import Skeleton from '../chat/Messages/Skeleton.svelte';
 	import XMark from '../icons/XMark.svelte';
 
-	export let placeholder: string | undefined = undefined;
-	export let chatInputElement: any;
+	export let placeholder = $i18n.t('Type here...');
 
-	export let id: string | null = null;
-	export let channel: any = null;
-	export let messages: any[] | null = [];
+	export let id = null;
+	export let chatInputElement;
 
 	export let typingUsers = [];
 	export let inputLoading = false;
@@ -84,22 +63,16 @@
 	export let userSuggestions = false;
 	export let channelSuggestions = false;
 
-	export let replyToMessage: any = null;
+	export let replyToMessage = null;
 
 	export let typingUsersClassName = 'from-white dark:from-gray-900';
 
 	let loaded = false;
 	let draggedOver = false;
-	let shiftKey = false;
 
 	let recording = false;
 	let content = '';
-	let inputEditor: Editor | null = null;
-	let files: any[] = [];
-	let isDestroyed = false;
-	$: parentId = id === 'root' ? null : id;
-	$: queueKey = JSON.stringify([$user?.id, channel?.id, parentId]);
-	$: messageQueue = $channelRequestQueues[queueKey] ?? [];
+	let files = [];
 
 	let filesInputElement;
 	let inputFiles;
@@ -138,21 +111,28 @@
 
 			const clipboardItems = await navigator.clipboard.read();
 
+			let imageUrl = null;
 			for (const item of clipboardItems) {
 				// Check for known image types
 				for (const type of item.types) {
 					if (type.startsWith('image/')) {
 						const blob = await item.getType(type);
-						const file = new File([blob], `clipboard-image.${type.split('/')[1]}`, {
-							type: type
-						});
-
-						inputFilesHandler([file]);
+						imageUrl = URL.createObjectURL(blob);
 					}
 				}
 			}
 
-			text = text.replaceAll('{{CLIPBOARD}}', () => clipboardText.replaceAll('\r\n', '\n'));
+			if (imageUrl) {
+				files = [
+					...files,
+					{
+						type: 'image',
+						url: imageUrl
+					}
+				];
+			}
+
+			text = text.replaceAll('{{CLIPBOARD}}', clipboardText);
 		}
 
 		if (text.includes('{{USER_LOCATION}}')) {
@@ -171,14 +151,6 @@
 		if (text.includes('{{USER_NAME}}')) {
 			const name = sessionUser?.name || 'User';
 			text = text.replaceAll('{{USER_NAME}}', name);
-		}
-
-		if (text.includes('{{USER_EMAIL}}')) {
-			const email = sessionUser?.email || '';
-
-			if (email) {
-				text = text.replaceAll('{{USER_EMAIL}}', email);
-			}
 		}
 
 		if (text.includes('{{USER_BIO}}')) {
@@ -367,9 +339,8 @@
 
 			// Convert the canvas to a Base64 image URL
 			const imageUrl = canvas.toDataURL('image/png');
-			const blob = await (await fetch(imageUrl)).blob();
-			const file = new File([blob], `screen-capture-${Date.now()}.png`, { type: 'image/png' });
-			inputFilesHandler([file]);
+			// Add the captured image to the files array to render it
+			files = [...files, { type: 'image', url: imageUrl }];
 			// Clean memory: Clear video srcObject
 			video.srcObject = null;
 		} catch (error) {
@@ -403,66 +374,72 @@
 				return;
 			}
 
-			const image = file.type.startsWith('image/') || isHeicImage(file);
-			uploadFileHandler(file, !image, image);
+			if (file['type'].startsWith('image/')) {
+				const compressImageHandler = async (imageUrl, settings = {}, config = {}) => {
+					// Quick shortcut so we don’t do unnecessary work.
+					const settingsCompression = settings?.imageCompression ?? false;
+					const configWidth = config?.file?.image_compression?.width ?? null;
+					const configHeight = config?.file?.image_compression?.height ?? null;
+
+					// If neither settings nor config wants compression, return original URL.
+					if (!settingsCompression && !configWidth && !configHeight) {
+						return imageUrl;
+					}
+
+					// Default to null (no compression unless set)
+					let width = null;
+					let height = null;
+
+					// If user/settings want compression, pick their preferred size.
+					if (settingsCompression) {
+						width = settings?.imageCompressionSize?.width ?? null;
+						height = settings?.imageCompressionSize?.height ?? null;
+					}
+
+					// Apply config limits as an upper bound if any
+					if (configWidth && (width === null || width > configWidth)) {
+						width = configWidth;
+					}
+					if (configHeight && (height === null || height > configHeight)) {
+						height = configHeight;
+					}
+
+					// Do the compression if required
+					if (width || height) {
+						return await compressImage(imageUrl, width, height);
+					}
+					return imageUrl;
+				};
+
+				let reader = new FileReader();
+
+				reader.onload = async (event) => {
+					let imageUrl = event.target.result;
+
+					// Compress the image if settings or config require it
+					if ($settings?.imageCompression && $settings?.imageCompressionInChannels) {
+						imageUrl = await compressImageHandler(imageUrl, $settings, $config);
+					}
+
+					files = [
+						...files,
+						{
+							type: 'image',
+							url: `${imageUrl}`
+						}
+					];
+				};
+
+				reader.readAsDataURL(file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file);
+			} else {
+				uploadFileHandler(file);
+			}
 		});
 	};
 
-	const prepareImageFileHandler = async (file: File) => {
-		const compressImageHandler = async (imageUrl: string, settings: any = {}, config: any = {}) => {
-			// Quick shortcut so we don’t do unnecessary work.
-			const settingsCompression =
-				(settings?.imageCompression ?? false) && (settings?.imageCompressionInChannels ?? true);
-			const configWidth = config?.file?.image_compression?.width ?? null;
-			const configHeight = config?.file?.image_compression?.height ?? null;
-
-			// If neither settings nor config wants compression, return original URL.
-			if (!settingsCompression && !configWidth && !configHeight) {
-				return imageUrl;
-			}
-
-			// Default to null (no compression unless set)
-			let width = null;
-			let height = null;
-
-			// If user/settings want compression, pick their preferred size.
-			if (settingsCompression) {
-				width = settings?.imageCompressionSize?.width ?? null;
-				height = settings?.imageCompressionSize?.height ?? null;
-			}
-
-			// Apply config limits as an upper bound if any
-			if (configWidth && (width === null || width > configWidth)) {
-				width = configWidth;
-			}
-			if (configHeight && (height === null || height > configHeight)) {
-				height = configHeight;
-			}
-
-			// Do the compression if required
-			if (width || height) {
-				return await compressImage(imageUrl, width, height);
-			}
-			return imageUrl;
-		};
-		const imageFile = isHeicImage(file) ? await convertHeicToJpeg(file) : file;
-		const imageUrl = await new Promise<string>((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => resolve(reader.result as string);
-			reader.onerror = () => reject(reader.error);
-			reader.readAsDataURL(imageFile);
-		});
-		const compressed = await compressImageHandler(imageUrl, $settings, $config);
-		const blob = await (await fetch(compressed as string)).blob();
-		return new File([blob], imageFile.name, { type: imageFile.type });
-	};
-
-	const uploadFileHandler = async (file: File, process = true, prepareImage = false) => {
-		const targetChannelId = channel.id;
-		const targetQueueKey = queueKey;
-		const senderId = $user?.id;
+	const uploadFileHandler = async (file) => {
 		const tempItemId = uuidv4();
-		const fileItem: any = {
+		const fileItem = {
 			type: 'file',
 			file: '',
 			id: null,
@@ -483,22 +460,20 @@
 		files = [...files, fileItem];
 
 		try {
-			if (prepareImage) file = await prepareImageFileHandler(file);
-			if (get(user)?.id !== senderId) return;
 			// During the file upload, file content is automatically extracted.
-			// If the file is an audio file, provide the language for STT.
-			let metadata = {
-				channel_id: targetChannelId,
-				// If the file is an audio file, provide the language for STT.
-				...((file.type.startsWith('audio/') || file.type.startsWith('video/')) &&
-				$settings?.audio?.stt?.language
-					? {
-							language: $settings?.audio?.stt?.language
-						}
-					: {})
-			};
 
-			const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+			// If the file is an audio file, provide the language for STT.
+			let metadata = null;
+			if (
+				(file.type.startsWith('audio/') || file.type.startsWith('video/')) &&
+				$settings?.audio?.stt?.language
+			) {
+				metadata = {
+					language: $settings?.audio?.stt?.language
+				};
+			}
+
+			const uploadedFile = await uploadFile(localStorage.token, file, metadata);
 
 			if (uploadedFile) {
 				console.info('File upload completed:', {
@@ -517,52 +492,25 @@
 				fileItem.id = uploadedFile.id;
 				fileItem.collection_name =
 					uploadedFile?.meta?.collection_name || uploadedFile?.collection_name;
-				fileItem.content_type = uploadedFile.meta?.content_type || uploadedFile.content_type;
-				fileItem.url = `${uploadedFile.id}`;
+				fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
 
 				files = files;
 			} else {
-				throw new Error($i18n.t('Failed to upload file.'));
+				files = files.filter((item) => item?.itemId !== tempItemId);
 			}
 		} catch (e) {
-			fileItem.status = 'error';
-			fileItem.error = String(e);
 			toast.error(`${e}`);
 			files = files.filter((item) => item?.itemId !== tempItemId);
-		} finally {
-			channelRequestQueues.update((q) => {
-				for (const item of q[targetQueueKey] ?? []) {
-					item.files = item.files.map((file) =>
-						file.itemId === fileItem.itemId ? fileItem : file
-					);
-				}
-				return q;
-			});
-			void processNextInQueue(targetQueueKey);
 		}
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
-		if (event.key === 'Shift') {
-			shiftKey = true;
-		}
-
 		if (event.key === 'Escape') {
 			draggedOver = false;
 		}
 	};
 
-	const handleKeyUp = (event: KeyboardEvent) => {
-		if (event.key === 'Shift') {
-			shiftKey = false;
-		}
-	};
-
-	const handleBlur = () => {
-		shiftKey = false;
-	};
-
-	const onDragOver = (e: DragEvent) => {
+	const onDragOver = (e) => {
 		e.preventDefault();
 
 		// Check if a file is being draggedOver.
@@ -577,7 +525,7 @@
 		draggedOver = false;
 	};
 
-	const onDrop = async (e: DragEvent) => {
+	const onDrop = async (e) => {
 		e.preventDefault();
 
 		if (e.dataTransfer?.files && acceptFiles) {
@@ -591,116 +539,35 @@
 		draggedOver = false;
 	};
 
-	const editQueuedMessage = (messageId: string) => {
-		if (content || files.length || replyToMessage) return;
-		const entry = messageQueue.find((item) => item.id === messageId);
-		if (!entry || entry.sending) return;
-		deleteQueuedMessage(messageId);
-		content = entry.prompt;
-		files = entry.files;
-		replyToMessage = entry.reply_to_message;
-		chatInputElement?.setText(content);
-		chatInputElement?.focus();
-	};
-
-	const deleteQueuedMessage = (messageId: string) => {
-		channelRequestQueues.update((q) => ({
-			...q,
-			[queueKey]: (q[queueKey] ?? []).filter((item) => item.id !== messageId || item.sending)
-		}));
-		void processNextInQueue(queueKey);
-	};
-
-	const resolveInputMentions = async () => {
-		const targetQueueKey = queueKey;
-		const editor = inputEditor;
-		if (editor && /[@#]/.test(content)) {
-			const state = editor.state;
-			try {
-				const candidates = await getChannelMentionCandidates(
-					localStorage.token,
-					channel.id,
-					getMentionUserQueries(state.doc),
-					{
-						users: userSuggestions,
-						apps: $config?.features?.enable_apps ?? false,
-						models: $models,
-						channels: channelSuggestions ? $channels : []
-					}
-				);
-				if (isDestroyed || targetQueueKey !== queueKey || editor.isDestroyed) return false;
-				const tr = resolveMentions(state, candidates);
-				// A paste lookup may have finished while Send was waiting for the same result.
-				if (editor.state.doc.eq(tr.doc)) return true;
-				if (editor.state.doc !== state.doc) return false;
-				if (tr.docChanged) editor.view.dispatch(tr);
-			} catch (error) {
-				toast.error(`${error}`);
-				return false;
-			}
-		}
-		return true;
-	};
-
 	const submitHandler = async () => {
-		if (disabled || !$user?.id || (content === '' && files.length === 0)) return;
+		if (content === '' && files.length === 0) {
+			return;
+		}
 
-		const targetQueueKey = queueKey;
-		if (inputEditor && /[@#]/.test(content) && !(await resolveInputMentions())) return;
-		if (content === '' && files.length === 0) return;
-		const entry = {
-			id: uuidv4(),
-			prompt: content,
-			files,
-			user_id: $user.id,
-			channel_id: channel.id,
-			parent_id: parentId,
-			reply_to_message: replyToMessage
-		};
-		const queued =
-			processingQueueChannels.has(targetQueueKey) ||
-			messageQueue.length > 0 ||
-			files.some((file) => ['uploading', 'error'].includes(file.status));
+		onSubmit({
+			content,
+			data: {
+				files: files
+			}
+		});
+
 		content = '';
 		files = [];
-		replyToMessage = null;
-		chatInputElement?.setText('');
 
-		if (queued) {
-			channelRequestQueues.update((q) => ({
-				...q,
-				[targetQueueKey]: [...(q[targetQueueKey] ?? []), entry]
-			}));
-			void processNextInQueue(targetQueueKey);
-		} else {
-			processingQueueChannels.add(targetQueueKey);
-			try {
-				await onSubmit({
-					content: entry.prompt,
-					data: { files: entry.files },
-					channel_id: entry.channel_id,
-					parent_id: entry.parent_id,
-					reply_to_message: entry.reply_to_message
-				});
-			} finally {
-				processingQueueChannels.delete(targetQueueKey);
-				void processNextInQueue(targetQueueKey);
-			}
+		if (chatInputElement) {
+			chatInputElement?.setText('');
+
+			await tick();
+
+			chatInputElement.focus();
 		}
-
-		await tick();
-		if (!isDestroyed && targetQueueKey === queueKey)
-			chatInputElement?.focus({ preventScroll: true });
 	};
 
 	$: if (content) {
 		onChange();
 	}
 
-	onMount(() => {
-		const unsubscribe = channelRequestQueues.subscribe(() => {
-			files = [...files];
-		});
+	onMount(async () => {
 		suggestions = [
 			{
 				char: '@',
@@ -708,8 +575,7 @@
 					i18n,
 					triggerChar: '@',
 					modelSuggestions: true,
-					userSuggestions,
-					channelId: channel?.id
+					userSuggestions
 				})
 			},
 			...(channelSuggestions
@@ -726,24 +592,6 @@
 				: []),
 			{
 				char: '/',
-				command: ({ editor, range, props }) => {
-					if (props?.type === 'prompt') {
-						void insertTextAtCursor(props.content ?? '');
-						return;
-					}
-
-					editor
-						.chain()
-						.focus()
-						.insertContentAt(range, [
-							{
-								type: 'mention',
-								attrs: { ...props, mentionSuggestionChar: '/' }
-							},
-							{ type: 'text', text: ' ' }
-						])
-						.run();
-				},
 				render: getSuggestionRenderer(CommandSuggestionList, {
 					i18n,
 					onSelect: (e) => {
@@ -774,28 +622,6 @@
 						}
 					}
 				})
-			},
-			{
-				char: ':',
-				allowSpaces: false,
-				command: ({ editor, range, props }) => {
-					// Convert the Unicode hex codepoint (e.g. "1F44B") to the actual emoji character (👋)
-					const codepoint = props.id;
-					const emoji = codepoint
-						.split('-')
-						.map((cp) => String.fromCodePoint(parseInt(cp, 16)))
-						.join('');
-					editor.chain().focus().deleteRange(range).insertContent(emoji).run();
-				},
-				render: getSuggestionRenderer(CommandSuggestionList, {
-					i18n,
-					onSelect: (e) => {
-						document.getElementById('chat-input')?.focus();
-					},
-
-					insertTextHandler: insertTextAtCursor,
-					onUpload: () => {}
-				})
 			}
 		];
 		loaded = true;
@@ -807,37 +633,25 @@
 		}, 100);
 
 		window.addEventListener('keydown', handleKeyDown);
-		window.addEventListener('keyup', handleKeyUp);
-		window.addEventListener('blur', handleBlur);
+		await tick();
 
-		let dropzoneElement: HTMLElement | null = null;
-		const initialize = async () => {
-			await tick();
-			if (isDestroyed) return;
+		const dropzoneElement = document.getElementById('channel-container');
 
-			dropzoneElement = document.getElementById('channel-container');
-			if (dropzoneElement) {
-				dropzoneElement.addEventListener('dragover', onDragOver);
-				dropzoneElement.addEventListener('drop', onDrop);
-				dropzoneElement.addEventListener('dragleave', onDragLeave);
-			}
-		};
-		initialize();
+		dropzoneElement?.addEventListener('dragover', onDragOver);
+		dropzoneElement?.addEventListener('drop', onDrop);
+		dropzoneElement?.addEventListener('dragleave', onDragLeave);
+	});
 
-		return () => {
-			unsubscribe();
-			isDestroyed = true;
+	onDestroy(() => {
+		window.removeEventListener('keydown', handleKeyDown);
 
-			window.removeEventListener('keydown', handleKeyDown);
-			window.removeEventListener('keyup', handleKeyUp);
-			window.removeEventListener('blur', handleBlur);
+		const dropzoneElement = document.getElementById('channel-container');
 
-			if (dropzoneElement) {
-				dropzoneElement.removeEventListener('dragover', onDragOver);
-				dropzoneElement.removeEventListener('drop', onDrop);
-				dropzoneElement.removeEventListener('dragleave', onDragLeave);
-			}
-		};
+		if (dropzoneElement) {
+			dropzoneElement?.removeEventListener('dragover', onDragOver);
+			dropzoneElement?.removeEventListener('drop', onDrop);
+			dropzoneElement?.removeEventListener('dragleave', onDragLeave);
+		}
 	});
 </script>
 
@@ -881,7 +695,6 @@
 								class=" absolute -top-12 left-0 right-0 flex justify-center z-30 pointer-events-none"
 							>
 								<button
-									aria-label={$i18n.t('Scroll to bottom')}
 									class=" bg-white border border-gray-100 dark:border-none dark:bg-white/20 p-1.5 rounded-full pointer-events-auto"
 									on:click={() => {
 										scrollEnd = true;
@@ -955,46 +768,20 @@
 					/>
 				{:else}
 					<form
-						class="w-full flex flex-col gap-1.5"
+						class="w-full flex gap-1.5"
 						on:submit|preventDefault={() => {
 							submitHandler();
 						}}
 					>
-						{#if messageQueue.length > 0}
-							<div
-								class="mb-1 mx-2 py-0.5 px-1.5 rounded-2xl bg-white dark:bg-gray-900/60 border border-gray-100 dark:border-gray-800/50 overflow-x-hidden overflow-y-auto max-h-[25vh]"
-							>
-								{#each messageQueue as entry (entry.id)}
-									<QueuedMessageItem
-										id={entry.id}
-										content={entry.prompt}
-										files={entry.files}
-										sending={entry.sending ?? false}
-										error={entry.error ?? ''}
-										onSendNow={(messageId) => processNextInQueue(queueKey, messageId)}
-										onEdit={content || files.length || replyToMessage
-											? undefined
-											: editQueuedMessage}
-										onDelete={deleteQueuedMessage}
-									/>
-								{/each}
-							</div>
-						{/if}
 						<div
 							id="message-input-container"
-							class="flex-1 flex flex-col relative w-full shadow-sm rounded-2xl border border-gray-100/60 dark:border-gray-800/50 hover:border-gray-100 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition bg-white dark:bg-gray-400/5 dark:text-gray-100"
-							dir={$settings?.chatDirection === 'RTL'
-								? 'rtl'
-								: $settings?.chatDirection === 'LTR'
-									? 'ltr'
-									: 'auto'}
+							class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border border-gray-50 dark:border-gray-850/30 hover:border-gray-100 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition px-1 bg-white/90 dark:bg-gray-400/5 dark:text-gray-100"
+							dir={$settings?.chatDirection ?? 'auto'}
 						>
 							{#if replyToMessage !== null}
-								<div class="px-3 pt-2 text-left w-full flex flex-col z-10">
+								<div class="px-3 pt-3 text-left w-full flex flex-col z-10">
 									<div class="flex items-center justify-between w-full">
-										<div
-											class="min-w-0 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"
-										>
+										<div class="pl-[1px] flex items-center gap-2 text-sm">
 											<div class="translate-y-[0.5px]">
 												<span class=""
 													>{$i18n.t('Replying to {{NAME}}', {
@@ -1005,14 +792,12 @@
 										</div>
 										<div>
 											<button
-												class="flex size-6 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-gray-400"
-												aria-label={$i18n.t('Cancel')}
-												type="button"
+												class="flex items-center dark:text-gray-500"
 												on:click={() => {
 													replyToMessage = null;
 												}}
 											>
-												<XMark className="size-3.5" />
+												<XMark />
 											</button>
 										</div>
 									</div>
@@ -1022,24 +807,19 @@
 							{#if files.length > 0}
 								<div class="mx-2 mt-2.5 -mb-1 flex flex-wrap gap-2">
 									{#each files as file, fileIdx}
-										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-											{@const fileUrl =
-												file.url.startsWith('data') || file.url.startsWith('http')
-													? file.url
-													: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
+										{#if file.type === 'image'}
 											<div class=" relative group">
 												<div class="relative">
 													<Image
-														src={fileUrl}
+														src={file.url}
 														alt=""
 														imageClassName=" size-10 rounded-xl object-cover"
 													/>
 												</div>
 												<div class=" absolute -top-1 -right-1">
 													<button
-														class=" bg-white text-black border border-white rounded-full hover-reveal transition"
+														class=" bg-white text-black border border-white rounded-full group-hover:visible invisible transition"
 														type="button"
-														aria-label={$i18n.t('Remove file')}
 														on:click={() => {
 															files.splice(fileIdx, 1);
 															files = files;
@@ -1081,20 +861,18 @@
 								</div>
 							{/if}
 
-							<div class="px-2">
+							<div class="px-2.5">
 								<div
-									class="scrollbar-hidden rtl:text-right ltr:text-left bg-transparent dark:text-gray-100 outline-hidden w-full pt-2 pb-0.5 px-1 resize-none h-fit max-h-96 overflow-auto"
+									class="scrollbar-hidden rtl:text-right ltr:text-left bg-transparent dark:text-gray-100 outline-hidden w-full pt-2.5 pb-[5px] px-1 resize-none h-fit max-h-96 overflow-auto"
 								>
 									{#key $settings?.richTextInput && $settings?.showFormattingToolbar}
 										<RichTextInput
 											id="chat-input"
-											className="input-prose min-h-fit h-full text-sm!"
 											bind:this={chatInputElement}
-											bind:editor={inputEditor}
 											json={true}
 											messageInput={true}
 											editable={!disabled}
-											placeholder={placeholder ?? $i18n.t('Type here...')}
+											{placeholder}
 											richText={$settings?.richTextInput ?? true}
 											showFormattingToolbar={$settings?.showFormattingToolbar ?? false}
 											shiftEnter={!($settings?.ctrlEnterToSend ?? false) &&
@@ -1104,10 +882,9 @@
 													navigator.maxTouchPoints > 0 ||
 													navigator.msMaxTouchPoints > 0
 												)}
-											largeTextAsFile={($settings?.largeTextAsFile ?? false) && !shiftKey}
+											largeTextAsFile={$settings?.largeTextAsFile ?? false}
 											floatingMenuPlacement={'top-start'}
 											{suggestions}
-											on:pasted={resolveInputMentions}
 											onChange={(e) => {
 												const { md } = e;
 												content = md;
@@ -1115,40 +892,12 @@
 											}}
 											on:keydown={async (e) => {
 												e = e.detail.event;
-												// IME confirmation must finish before a shortcut can send and clear the editor.
-												if (e.isComposing || e.keyCode === 229 || inputEditor?.view.composing)
-													return;
-
 												const isCtrlPressed = e.ctrlKey || e.metaKey; // metaKey is for Cmd key on Mac
 
 												const suggestionsContainerElement =
 													document.getElementById('suggestions-container');
 
 												if (!suggestionsContainerElement) {
-													if (
-														e.key === 'ArrowUp' &&
-														!e.isComposing &&
-														!isCtrlPressed &&
-														!e.shiftKey &&
-														!e.altKey &&
-														!disabled &&
-														content === '' &&
-														files.length === 0
-													) {
-														const message = messages?.find(
-															(message) => message.user_id === $user?.id && !message.temp_id
-														);
-														if (message) {
-															const messageId = parentId ? `${parentId}-${message.id}` : message.id;
-															const editButton = document.getElementById(
-																`edit-message-${messageId}`
-															);
-															if (editButton) {
-																e.preventDefault();
-																editButton.click();
-															}
-														}
-													}
 													if (
 														!$mobile ||
 														!(
@@ -1157,17 +906,15 @@
 															navigator.msMaxTouchPoints > 0
 														)
 													) {
+														// Prevent Enter key from creating a new line
 														// Uses keyCode '13' for Enter key for chinese/japanese keyboards
-														const enterPressed =
-															($settings?.ctrlEnterToSend ?? false)
-																? (e.key === 'Enter' || e.keyCode === 13) && isCtrlPressed
-																: (e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey;
-
-														if (enterPressed) {
+														if (e.keyCode === 13 && !e.shiftKey) {
 															e.preventDefault();
-															if (content !== '' || files.length > 0) {
-																submitHandler();
-															}
+														}
+
+														// Submit the content when Enter key is pressed
+														if (content !== '' && e.keyCode === 13 && !e.shiftKey) {
+															submitHandler();
 														}
 													}
 												}
@@ -1185,24 +932,26 @@
 
 												if (clipboardData && clipboardData.items) {
 													for (const item of clipboardData.items) {
-														if (item.type === 'text/plain') {
-															if (($settings?.largeTextAsFile ?? false) && !shiftKey) {
-																const text = clipboardData.getData('text/plain');
+														if (item.type.indexOf('image') !== -1) {
+															const blob = item.getAsFile();
+															const reader = new FileReader();
 
-																if (text.length > PASTED_TEXT_CHARACTER_LIMIT) {
-																	e.preventDefault();
-																	const blob = new Blob([text], { type: 'text/plain' });
-																	const file = new File([blob], `Pasted_Text_${Date.now()}.txt`, {
-																		type: 'text/plain'
-																	});
+															reader.onload = function (e) {
+																files = [
+																	...files,
+																	{
+																		type: 'image',
+																		url: `${e.target.result}`
+																	}
+																];
+															};
 
-																	await uploadFileHandler(file);
-																}
-															}
-														} else {
+															reader.readAsDataURL(blob);
+														} else if (item?.kind === 'file') {
 															const file = item.getAsFile();
 															if (file) {
-																await inputFilesHandler([file]);
+																const _files = [file];
+																await inputFilesHandler(_files);
 																e.preventDefault();
 															}
 														}
@@ -1214,8 +963,8 @@
 								</div>
 							</div>
 
-							<div class=" flex items-center justify-between gap-2 p-1.5 pt-0.5 max-w-full">
-								<div class="flex items-center flex-1 min-w-0">
+							<div class=" flex justify-between mb-2.5 mx-0.5">
+								<div class="ml-1 self-end flex space-x-1 flex-1">
 									<slot name="menu">
 										{#if acceptFiles}
 											<InputMenu
@@ -1226,15 +975,15 @@
 											>
 												<button
 													id="input-menu-button"
-													class="bg-transparent hover:bg-gray-100 text-gray-500 dark:text-gray-400 dark:hover:bg-gray-800 rounded-lg size-7 flex justify-center items-center outline-hidden focus:outline-hidden shrink-0"
+													class="bg-transparent hover:bg-white/80 text-gray-800 dark:text-white dark:hover:bg-gray-800 transition rounded-full p-1.5 outline-hidden focus:outline-hidden"
 													type="button"
-													aria-label={$i18n.t('More')}
+													aria-label="More"
 												>
 													<svg
 														xmlns="http://www.w3.org/2000/svg"
 														viewBox="0 0 20 20"
 														fill="currentColor"
-														class="size-4"
+														class="size-5"
 													>
 														<path
 															d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z"
@@ -1246,12 +995,12 @@
 									</slot>
 								</div>
 
-								<div class="flex items-center gap-1 shrink-0">
+								<div class="self-end flex space-x-1 mr-1">
 									{#if content === ''}
 										<Tooltip content={$i18n.t('Record voice')}>
 											<button
 												id="voice-input-button"
-												class=" text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-lg size-7 flex items-center justify-center"
+												class=" text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-full p-1.5 mr-0.5 self-center"
 												type="button"
 												on:click={async () => {
 													try {
@@ -1279,13 +1028,13 @@
 														toast.error($i18n.t('Permission denied when accessing microphone'));
 													}
 												}}
-												aria-label={$i18n.t('Voice Input')}
+												aria-label="Voice Input"
 											>
 												<svg
 													xmlns="http://www.w3.org/2000/svg"
 													viewBox="0 0 20 20"
 													fill="currentColor"
-													class="size-4"
+													class="w-5 h-5 translate-y-[0.5px]"
 												>
 													<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
 													<path
@@ -1301,8 +1050,7 @@
 											<div class=" flex items-center">
 												<Tooltip content={$i18n.t('Stop')}>
 													<button
-														aria-label={$i18n.t('Stop')}
-														class="bg-white hover:bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-800 transition rounded-full size-7 flex items-center justify-center"
+														class="bg-white hover:bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-800 transition rounded-full p-1.5"
 														on:click={() => {
 															onStop();
 														}}
@@ -1311,7 +1059,7 @@
 															xmlns="http://www.w3.org/2000/svg"
 															viewBox="0 0 24 24"
 															fill="currentColor"
-															class="size-4"
+															class="size-5"
 														>
 															<path
 																fill-rule="evenodd"
@@ -1327,10 +1075,9 @@
 												<Tooltip content={$i18n.t('Send message')}>
 													<button
 														id="send-message-button"
-														aria-label={$i18n.t('Send message')}
 														class="{content !== '' || files.length !== 0
 															? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
-															: 'text-white bg-gray-200 dark:text-gray-900 dark:bg-gray-700 disabled'} transition rounded-full size-7 flex items-center justify-center self-center"
+															: 'text-white bg-gray-200 dark:text-gray-900 dark:bg-gray-700 disabled'} transition rounded-full p-1.5 self-center"
 														type="submit"
 														disabled={content === '' && files.length === 0}
 													>
@@ -1338,7 +1085,7 @@
 															xmlns="http://www.w3.org/2000/svg"
 															viewBox="0 0 16 16"
 															fill="currentColor"
-															class="size-4"
+															class="size-5"
 														>
 															<path
 																fill-rule="evenodd"

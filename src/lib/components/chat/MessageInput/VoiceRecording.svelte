@@ -11,7 +11,7 @@
 	import LocalizedFormat from 'dayjs/plugin/localizedFormat';
 	dayjs.extend(LocalizedFormat);
 
-	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+	const i18n = getContext('i18n');
 
 	export let recording = false;
 	export let transcribe = true;
@@ -58,36 +58,7 @@
 		return `${minutes}:${formattedSeconds}`;
 	};
 
-	let wakeLock = null;
-
-	const requestWakeLock = async () => {
-		if ('wakeLock' in navigator) {
-			try {
-				wakeLock = await navigator.wakeLock.request('screen');
-				console.log('Wake Lock acquired');
-
-				wakeLock.addEventListener('release', () => {
-					console.log('Wake Lock released');
-				});
-			} catch (err) {
-				console.log('Wake Lock request failed:', err);
-			}
-		}
-	};
-
-	const releaseWakeLock = async () => {
-		if (wakeLock) {
-			try {
-				await wakeLock.release();
-			} catch (err) {
-				console.log('Wake Lock release failed:', err);
-			}
-			wakeLock = null;
-		}
-	};
-
 	let stream;
-	let audioContext: AudioContext | null = null;
 	let speechRecognition;
 
 	let mediaRecorder;
@@ -117,14 +88,8 @@
 		return Math.min(1.0, Math.max(0.01, scaledRMS));
 	};
 
-	// Chrome on Android caps open audio outputs at 10.
-	const closeAudioContext = () => {
-		void audioContext?.close();
-		audioContext = null;
-	};
-
 	const analyseAudio = (stream) => {
-		audioContext = new AudioContext();
+		const audioContext = new AudioContext();
 		const audioStreamSource = audioContext.createMediaStreamSource(stream);
 
 		const analyser = audioContext.createAnalyser();
@@ -182,10 +147,7 @@
 		// Create a blob from the audio chunks
 
 		await tick();
-		const file = blobToFile(
-			audioBlob,
-			`Recording-${dayjs().locale($i18n.language).format('L LT')}.${ext}`
-		);
+		const file = blobToFile(audioBlob, `Recording-${dayjs().format('L LT')}.${ext}`);
 
 		if (transcribe) {
 			if ($config.audio.stt.engine === 'web' || ($settings?.audio?.stt?.engine ?? '') === 'web') {
@@ -248,29 +210,16 @@
 			return;
 		}
 
-		const mineTypes = [
-			'audio/webm; codecs=opus',
-			'audio/webm',
-			'audio/ogg; codecs=opus',
-			'audio/mp4',
-			'audio/wav'
-		];
+		const mineTypes = ['audio/webm; codecs=opus', 'audio/mp4'];
 
 		mediaRecorder = new MediaRecorder(stream, {
 			mimeType: mineTypes.find((type) => MediaRecorder.isTypeSupported(type))
 		});
 
-		mediaRecorder.onstart = async () => {
+		mediaRecorder.onstart = () => {
 			console.log('Recording started');
 			loading = false;
 			startDurationCounter();
-
-			if (document.activeElement === document.body || !document.activeElement?.checkVisibility()) {
-				await tick();
-				document.getElementById('confirm-recording-button')?.focus();
-			}
-
-			await requestWakeLock();
 
 			audioChunks = [];
 			analyseAudio(stream);
@@ -315,16 +264,11 @@
 		if (transcribe) {
 			if ($config.audio.stt.engine === 'web' || ($settings?.audio?.stt?.engine ?? '') === 'web') {
 				if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-					// reset accumulated transcription from previous sessions
-					transcription = '';
-
 					// Create a SpeechRecognition object
 					speechRecognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
 
 					// Set continuous to true for continuous recognition
 					speechRecognition.continuous = true;
-					// Interim results keep the inactivity timeout from firing mid-sentence
-					speechRecognition.interimResults = true;
 
 					// Set the timeout for turning off the recognition after inactivity (in milliseconds)
 					const inactivityTimeout = 2000; // 3 seconds
@@ -340,11 +284,9 @@
 
 						// Handle recognized speech
 						console.log(event);
-						for (const result of Array.from(event.results).slice(event.resultIndex)) {
-							if (result.isFinal) {
-								transcription = `${transcription}${result[0].transcript}`;
-							}
-						}
+						const transcript = event.results[Object.keys(event.results).length - 1][0].transcript;
+
+						transcription = `${transcription}${transcript}`;
 
 						await tick();
 						document.getElementById('chat-input')?.focus();
@@ -375,19 +317,11 @@
 						toast.error($i18n.t(`Speech recognition error: {{error}}`, { error: event.error }));
 						onCancel();
 
-						cancelRecording();
+						stopRecording();
 					};
 				}
 			}
 		}
-	};
-
-	const cancelRecording = async () => {
-		if (speechRecognition) {
-			// detach onend so cancelling does not confirm the transcription
-			speechRecognition.onend = null;
-		}
-		await stopRecording();
 	};
 
 	const stopRecording = async () => {
@@ -399,8 +333,6 @@
 			speechRecognition.stop();
 		}
 
-		await releaseWakeLock();
-
 		stopDurationCounter();
 		audioChunks = [];
 		visualizerData = Array(VISUALIZER_BUFFER_LENGTH).fill(0);
@@ -411,7 +343,6 @@
 		}
 
 		stream = null;
-		closeAudioContext();
 	};
 
 	const confirmRecording = async () => {
@@ -423,15 +354,12 @@
 		}
 		clearInterval(durationCounter);
 
-		await releaseWakeLock();
-
 		if (stream) {
 			const tracks = stream.getTracks();
 			tracks.forEach((track) => track.stop());
 		}
 
 		stream = null;
-		closeAudioContext();
 	};
 
 	let resizeObserver;
@@ -440,24 +368,7 @@
 	let maxVisibleItems = 300;
 	$: maxVisibleItems = Math.floor(containerWidth / 5); // 2px width + 0.5px gap
 
-	const handleKeyDown = (e) => {
-		if (recording && e.key === 'Escape') {
-			e.preventDefault();
-			cancelRecording();
-			onCancel();
-		}
-	};
-
-	const handleVisibilityChange = async () => {
-		if (recording && document.visibilityState === 'visible') {
-			await requestWakeLock();
-		}
-	};
-
 	onMount(() => {
-		window.addEventListener('keydown', handleKeyDown);
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-
 		// listen to width changes
 		resizeObserver = new ResizeObserver(() => {
 			VISUALIZER_BUFFER_LENGTH = Math.floor(window.innerWidth / 4);
@@ -474,11 +385,6 @@
 	});
 
 	onDestroy(() => {
-		window.removeEventListener('keydown', handleKeyDown);
-		document.removeEventListener('visibilitychange', handleVisibilityChange);
-		stopRecording();
-		releaseWakeLock();
-		closeAudioContext();
 		// remove resize observer
 		resizeObserver.disconnect();
 	});
@@ -501,9 +407,8 @@
 
 
              rounded-full"
-			aria-label={$i18n.t('Cancel')}
 			on:click={async () => {
-				cancelRecording();
+				stopRecording();
 				onCancel();
 			}}
 		>
@@ -521,7 +426,7 @@
 			{#each visualizerData.slice().reverse() as rms}
 				<div class="flex items-center h-full">
 					<div
-						class="w-[0.125rem] shrink-0
+						class="w-[2px] shrink-0
                     
                     {loading
 							? ' bg-gray-500 dark:bg-gray-400   '
@@ -542,7 +447,7 @@
         
         
         {loading ? ' text-gray-500  dark:text-gray-400  ' : ' text-indigo-400 '} 
-       font-normal flex-1 mx-auto text-center"
+       font-medium flex-1 mx-auto text-center"
 			>
 				{formatSeconds(durationSeconds)}
 			</div>
@@ -642,9 +547,7 @@
 				</div>
 			{:else}
 				<button
-					id="confirm-recording-button"
 					type="button"
-					aria-label={$i18n.t('Confirm recording')}
 					class="p-1.5 bg-indigo-500 text-white dark:bg-indigo-500 dark:text-blue-950 rounded-full"
 					on:click={async () => {
 						await confirmRecording();

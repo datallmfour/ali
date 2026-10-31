@@ -2,16 +2,12 @@
 	import { toast } from 'svelte-sonner';
 	import { createEventDispatcher, onMount, getContext } from 'svelte';
 
-	import { user, settings, config, visibleControls } from '$lib/stores';
+	import { user, settings, config } from '$lib/stores';
 	import { getVoices as _getVoices } from '$lib/apis/audio';
 
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import UserSettingField from './UserSettingField.svelte';
-	import UserSettingRow from './UserSettingRow.svelte';
-	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
-	import UserSettingSection from './UserSettingSection.svelte';
 	const dispatch = createEventDispatcher();
 
 	const i18n = getContext('i18n');
@@ -39,8 +35,6 @@
 
 	// Audio speed control
 	let playbackRate = 1;
-	const inputClass =
-		'h-7 w-full rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 
 	const getVoices = async () => {
 		if (TTSEngine === 'browser-kokoro') {
@@ -78,13 +72,13 @@
 		}
 	};
 
-	const setResponseAutoPlayback = async (enabled: boolean) => {
-		responseAutoPlayback = enabled;
+	const toggleResponseAutoPlayback = async () => {
+		responseAutoPlayback = !responseAutoPlayback;
 		saveSettings({ responseAutoPlayback: responseAutoPlayback });
 	};
 
-	const setSpeechAutoSend = async (enabled: boolean) => {
-		speechAutoSend = enabled;
+	const toggleSpeechAutoSend = async () => {
+		speechAutoSend = !speechAutoSend;
 		saveSettings({ speechAutoSend: speechAutoSend });
 	};
 
@@ -133,10 +127,9 @@
 				const model_id = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
 				const { KokoroTTS } = await import('kokoro-js');
-				const adapter = await navigator?.gpu?.requestAdapter().catch(() => null);
 				TTSModel = await KokoroTTS.from_pretrained(model_id, {
 					dtype: TTSEngineConfig.dtype, // Options: "fp32", "fp16", "q8", "q4", "q4f16"
-					device: adapter ? 'webgpu' : 'wasm', // Detect WebGPU
+					device: !!navigator?.gpu ? 'webgpu' : 'wasm', // Detect WebGPU
 					progress_callback: (e) => {
 						TTSModelProgress = e;
 						console.log(e);
@@ -161,7 +154,7 @@
 
 <form
 	id="tab-audio"
-	class="flex flex-col h-full justify-between text-sm"
+	class="flex flex-col h-full justify-between space-y-3 text-sm"
 	on:submit|preventDefault={async () => {
 		saveSettings({
 			audio: {
@@ -182,151 +175,217 @@
 		dispatch('save');
 	}}
 >
-	<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4">
-		{$i18n.t('settings.personal.audio.title')}
-	</h2>
+	<div class=" space-y-3 overflow-y-scroll max-h-[28rem] md:max-h-full">
+		<div>
+			<div class=" mb-1 text-sm font-medium">{$i18n.t('STT Settings')}</div>
 
-	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
-		<UserSettingSection title={$i18n.t('settings.personal.audio.sections.sttSettings.title')} first>
 			{#if $config.audio.stt.engine !== 'web'}
-				{#if $visibleControls['settings.speech_to_text_engine']}
-					<UserSettingRow
-						label={$i18n.t('settings.personal.audio.speechToTextEngine.label')}
-						description={$i18n.t('settings.personal.audio.speechToTextEngine.description')}
-					>
-						<SettingsSelect
+				<div class=" py-0.5 flex w-full justify-between">
+					<div class=" self-center text-xs font-medium">{$i18n.t('Speech-to-Text Engine')}</div>
+					<div class="flex items-center relative">
+						<select
+							class="dark:bg-gray-900 w-fit pr-8 rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
 							bind:value={STTEngine}
-							ariaLabel={$i18n.t('settings.personal.audio.speechToTextEngine.label')}
 							placeholder={$i18n.t('Select an engine')}
 						>
 							<option value="">{$i18n.t('Default')}</option>
 							<option value="web">{$i18n.t('Web API')}</option>
-						</SettingsSelect>
-					</UserSettingRow>
-				{/if}
+						</select>
+					</div>
+				</div>
 
-				<UserSettingRow
-					label={$i18n.t('settings.personal.audio.language.label')}
-					description={$i18n.t('settings.personal.audio.language.description')}
-				>
-					<Tooltip
-						content={$i18n.t(
-							'The language of the input audio. Supplying the input language in ISO-639-1 (e.g. en) format will improve accuracy and latency. Leave blank to automatically detect the language.'
-						)}
-						placement="top"
-					>
-						<input
-							type="text"
-							bind:value={STTLanguage}
-							aria-label={$i18n.t('Speech-to-Text Language')}
-							placeholder={$i18n.t('e.g. en')}
-							class="h-7 w-24 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-right text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500"
-						/>
-					</Tooltip>
-				</UserSettingRow>
+				<div class=" py-0.5 flex w-full justify-between">
+					<div class=" self-center text-xs font-medium">{$i18n.t('Language')}</div>
+
+					<div class="flex items-center relative text-xs px-3">
+						<Tooltip
+							content={$i18n.t(
+								'The language of the input audio. Supplying the input language in ISO-639-1 (e.g. en) format will improve accuracy and latency. Leave blank to automatically detect the language.'
+							)}
+							placement="top"
+						>
+							<input
+								type="text"
+								bind:value={STTLanguage}
+								placeholder={$i18n.t('e.g. en')}
+								class=" text-sm text-right bg-transparent dark:text-gray-300 outline-hidden"
+							/>
+						</Tooltip>
+					</div>
+				</div>
 			{/if}
 
-			<UserSettingRow
-				let:labelId
-				label={$i18n.t('settings.personal.audio.instantAutoSendAfterVoiceTranscription.label')}
-				description={$i18n.t(
-					'settings.personal.audio.instantAutoSendAfterVoiceTranscription.description'
-				)}
-			>
-				<Switch
-					ariaLabelledbyId={labelId}
-					state={speechAutoSend}
-					ariaLabel={$i18n.t(
-						'settings.personal.audio.instantAutoSendAfterVoiceTranscription.label'
-					)}
-					on:change={(event) => {
-						setSpeechAutoSend(event.detail);
-					}}
-				/>
-			</UserSettingRow>
-		</UserSettingSection>
+			<div class=" py-0.5 flex w-full justify-between">
+				<div class=" self-center text-xs font-medium">
+					{$i18n.t('Instant Auto-Send After Voice Transcription')}
+				</div>
 
-		<UserSettingSection title={$i18n.t('settings.personal.audio.sections.ttsSettings.title')}>
-			{#if $visibleControls['settings.text_to_speech_engine']}
-				<UserSettingRow
-					label={$i18n.t('settings.personal.audio.textToSpeechEngine.label')}
-					description={$i18n.t('settings.personal.audio.textToSpeechEngine.description')}
+				<button
+					class="p-1 px-3 text-xs flex rounded-sm transition"
+					on:click={() => {
+						toggleSpeechAutoSend();
+					}}
+					type="button"
 				>
-					<SettingsSelect
+					{#if speechAutoSend === true}
+						<span class="ml-2 self-center">{$i18n.t('On')}</span>
+					{:else}
+						<span class="ml-2 self-center">{$i18n.t('Off')}</span>
+					{/if}
+				</button>
+			</div>
+		</div>
+
+		<div>
+			<div class=" mb-1 text-sm font-medium">{$i18n.t('TTS Settings')}</div>
+
+			<div class=" py-0.5 flex w-full justify-between">
+				<div class=" self-center text-xs font-medium">{$i18n.t('Text-to-Speech Engine')}</div>
+				<div class="flex items-center relative">
+					<select
+						class="dark:bg-gray-900 w-fit pr-8 rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
 						bind:value={TTSEngine}
-						ariaLabel={$i18n.t('settings.personal.audio.textToSpeechEngine.label')}
 						placeholder={$i18n.t('Select an engine')}
 					>
 						<option value="">{$i18n.t('Default')}</option>
 						<option value="browser-kokoro">{$i18n.t('Kokoro.js (Browser)')}</option>
-					</SettingsSelect>
-				</UserSettingRow>
-			{/if}
+					</select>
+				</div>
+			</div>
 
 			{#if TTSEngine === 'browser-kokoro'}
-				<UserSettingRow
-					label={$i18n.t('settings.personal.audio.kokoroJsDtype.label')}
-					description={$i18n.t('settings.personal.audio.kokoroJsDtype.description')}
-				>
-					<SettingsSelect
-						bind:value={TTSEngineConfig.dtype}
-						ariaLabel={$i18n.t('settings.personal.audio.kokoroJsDtype.label')}
-						placeholder={$i18n.t('Select dtype')}
-					>
-						<option value="" disabled selected>{$i18n.t('Select dtype')}</option>
-						<option value="fp32">fp32</option>
-						<option value="fp16">fp16</option>
-						<option value="q8">q8</option>
-						<option value="q4">q4</option>
-					</SettingsSelect>
-				</UserSettingRow>
+				<div class=" py-0.5 flex w-full justify-between">
+					<div class=" self-center text-xs font-medium">{$i18n.t('Kokoro.js Dtype')}</div>
+					<div class="flex items-center relative">
+						<select
+							class="dark:bg-gray-900 w-fit pr-8 rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
+							bind:value={TTSEngineConfig.dtype}
+							placeholder={$i18n.t('Select dtype')}
+						>
+							<option value="" disabled selected>{$i18n.t('Select dtype')}</option>
+							<option value="fp32">fp32</option>
+							<option value="fp16">fp16</option>
+							<option value="q8">q8</option>
+							<option value="q4">q4</option>
+						</select>
+					</div>
+				</div>
 			{/if}
 
-			<UserSettingRow
-				let:labelId
-				label={$i18n.t('settings.personal.audio.autoPlaybackResponse.label')}
-				description={$i18n.t('settings.personal.audio.autoPlaybackResponse.description')}
-			>
-				<Switch
-					ariaLabelledbyId={labelId}
-					state={responseAutoPlayback}
-					ariaLabel={$i18n.t('settings.personal.audio.autoPlaybackResponse.label')}
-					on:change={(event) => {
-						setResponseAutoPlayback(event.detail);
-					}}
-				/>
-			</UserSettingRow>
+			<div class=" py-0.5 flex w-full justify-between">
+				<div class=" self-center text-xs font-medium">{$i18n.t('Auto-playback response')}</div>
 
-			<UserSettingRow
-				label={$i18n.t('settings.personal.audio.speechPlaybackSpeed.label')}
-				description={$i18n.t('settings.personal.audio.speechPlaybackSpeed.description')}
-			>
-				<div class="relative flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-600">
+				<button
+					class="p-1 px-3 text-xs flex rounded-sm transition"
+					on:click={() => {
+						toggleResponseAutoPlayback();
+					}}
+					type="button"
+				>
+					{#if responseAutoPlayback === true}
+						<span class="ml-2 self-center">{$i18n.t('On')}</span>
+					{:else}
+						<span class="ml-2 self-center">{$i18n.t('Off')}</span>
+					{/if}
+				</button>
+			</div>
+
+			<div class=" py-0.5 flex w-full justify-between">
+				<div class=" self-center text-xs font-medium">{$i18n.t('Speech Playback Speed')}</div>
+
+				<div class="flex items-center relative text-xs px-3">
 					<input
 						type="number"
 						min="0"
 						step="0.01"
 						bind:value={playbackRate}
-						aria-label={$i18n.t('settings.personal.audio.speechPlaybackSpeed.label')}
-						class="h-7 w-16 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-right text-xs text-gray-700 outline-hidden transition-colors focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:focus:border-blue-500"
+						class=" text-sm text-right bg-transparent dark:text-gray-300 outline-hidden"
 					/>
 					x
 				</div>
-			</UserSettingRow>
-		</UserSettingSection>
+			</div>
+		</div>
+
+		<hr class=" border-gray-100/30 dark:border-gray-850/30" />
 
 		{#if TTSEngine === 'browser-kokoro'}
 			{#if TTSModel}
-				<UserSettingSection title={$i18n.t('settings.personal.audio.sections.voice.title')}>
-					<UserSettingField
-						label={$i18n.t('settings.personal.audio.kokoroVoice.label')}
-						description={$i18n.t('settings.personal.audio.kokoroVoice.description')}
-					>
+				<div>
+					<div class=" mb-2.5 text-sm font-medium">{$i18n.t('Set Voice')}</div>
+					<div class="flex w-full">
+						<div class="flex-1">
+							<input
+								list="voice-list"
+								class="w-full text-sm bg-transparent dark:text-gray-300 outline-hidden"
+								bind:value={voice}
+								placeholder={$i18n.t('Select a voice')}
+							/>
+
+							<datalist id="voice-list">
+								{#each voices as voice}
+									<option value={voice.id}>{voice.name}</option>
+								{/each}
+							</datalist>
+						</div>
+					</div>
+				</div>
+			{:else}
+				<div>
+					<div class=" mb-2.5 text-sm font-medium flex gap-2 items-center">
+						<Spinner className="size-4" />
+
+						<div class=" text-sm font-medium shimmer">
+							{$i18n.t('Loading Kokoro.js...')}
+							{TTSModelProgress && TTSModelProgress.status === 'progress'
+								? `(${Math.round(TTSModelProgress.progress * 10) / 10}%)`
+								: ''}
+						</div>
+					</div>
+
+					<div class="text-xs text-gray-500">
+						{$i18n.t('Please do not close the settings page while loading the model.')}
+					</div>
+				</div>
+			{/if}
+		{:else if $config.audio.tts.engine === ''}
+			<div>
+				<div class=" mb-2.5 text-sm font-medium">{$i18n.t('Set Voice')}</div>
+				<div class="flex w-full">
+					<div class="flex-1">
+						<select
+							class="dark:bg-gray-900 w-full text-sm bg-transparent dark:text-gray-300 outline-hidden"
+							bind:value={voice}
+						>
+							<option value="" selected={voice !== ''}>{$i18n.t('Default')}</option>
+							{#each voices.filter((v) => nonLocalVoices || v.localService === true) as _voice}
+								<option
+									value={_voice.name}
+									class="bg-gray-100 dark:bg-gray-700"
+									selected={voice === _voice.name}>{_voice.name}</option
+								>
+							{/each}
+						</select>
+					</div>
+				</div>
+				<div class="flex items-center justify-between my-1.5">
+					<div class="text-xs">
+						{$i18n.t('Allow non-local voices')}
+					</div>
+
+					<div class="mt-1">
+						<Switch bind:state={nonLocalVoices} />
+					</div>
+				</div>
+			</div>
+		{:else if $config.audio.tts.engine !== ''}
+			<div>
+				<div class=" mb-2.5 text-sm font-medium">{$i18n.t('Set Voice')}</div>
+				<div class="flex w-full">
+					<div class="flex-1">
 						<input
 							list="voice-list"
-							class={inputClass}
+							class="w-full text-sm bg-transparent dark:text-gray-300 outline-hidden"
 							bind:value={voice}
-							aria-label={$i18n.t('settings.personal.audio.sections.voice.title')}
 							placeholder={$i18n.t('Select a voice')}
 						/>
 
@@ -335,82 +394,15 @@
 								<option value={voice.id}>{voice.name}</option>
 							{/each}
 						</datalist>
-					</UserSettingField>
-				</UserSettingSection>
-			{:else}
-				<UserSettingSection title={$i18n.t('settings.personal.audio.sections.voice.title')}>
-					<div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-						<Spinner className="size-4" />
-
-						<div class="shimmer">
-							{$i18n.t('Loading Kokoro.js...')}
-							{TTSModelProgress && TTSModelProgress.status === 'progress'
-								? `(${Math.round(TTSModelProgress.progress * 10) / 10}%)`
-								: ''}
-						</div>
 					</div>
-
-					<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
-						{$i18n.t('Please do not close the settings page while loading the model.')}
-					</div>
-				</UserSettingSection>
-			{/if}
-		{:else if $config.audio.tts.engine === ''}
-			<UserSettingSection title={$i18n.t('settings.personal.audio.sections.voice.title')}>
-				<UserSettingField
-					label={$i18n.t('settings.personal.audio.browserVoice.label')}
-					description={$i18n.t('settings.personal.audio.browserVoice.description')}
-				>
-					<SettingsSelect
-						bind:value={voice}
-						className="w-full"
-						ariaLabel={$i18n.t('settings.personal.audio.sections.voice.title')}
-					>
-						<option value="" selected={voice !== ''}>{$i18n.t('Default')}</option>
-						{#each voices.filter((v) => nonLocalVoices || v.localService === true) as _voice}
-							<option
-								value={_voice.voiceURI}
-								class="bg-gray-100 dark:bg-gray-700"
-								selected={voice === _voice.voiceURI}>{_voice.name}</option
-							>
-						{/each}
-					</SettingsSelect>
-				</UserSettingField>
-				<UserSettingRow
-					let:labelId
-					label={$i18n.t('settings.personal.audio.allowNonLocalVoices.label')}
-					description={$i18n.t('settings.personal.audio.allowNonLocalVoices.description')}
-				>
-					<Switch ariaLabelledbyId={labelId} bind:state={nonLocalVoices} />
-				</UserSettingRow>
-			</UserSettingSection>
-		{:else if $config.audio.tts.engine !== ''}
-			<UserSettingSection title={$i18n.t('settings.personal.audio.sections.voice.title')}>
-				<UserSettingField
-					label={$i18n.t('settings.personal.audio.serviceVoice.label')}
-					description={$i18n.t('settings.personal.audio.serviceVoice.description')}
-				>
-					<input
-						list="voice-list"
-						class={inputClass}
-						bind:value={voice}
-						aria-label={$i18n.t('settings.personal.audio.sections.voice.title')}
-						placeholder={$i18n.t('Select a voice')}
-					/>
-
-					<datalist id="voice-list">
-						{#each voices as voice}
-							<option value={voice.id}>{voice.name}</option>
-						{/each}
-					</datalist>
-				</UserSettingField>
-			</UserSettingSection>
+				</div>
+			</div>
 		{/if}
 	</div>
 
-	<div class="shrink-0 flex justify-end text-sm font-normal">
+	<div class="flex justify-end text-sm font-medium">
 		<button
-			class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+			class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
 			type="submit"
 		>
 			{$i18n.t('Save')}

@@ -1,16 +1,15 @@
 <script lang="ts">
-	import { getContext, tick } from 'svelte';
+	import { getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 
 	import {
 		WEBUI_NAME,
-		artifactContents,
 		banners,
 		chatId,
-		chatTitle as _chatTitle,
 		config,
 		mobile,
 		settings,
+		showArchivedChats,
 		showControls,
 		showSidebar,
 		temporaryChatEnabled,
@@ -22,8 +21,10 @@
 	import { goto } from '$app/navigation';
 
 	import ShareChatModal from '../chat/ShareChatModal.svelte';
+	import ModelSelector from '../chat/ModelSelector.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Menu from '$lib/components/layout/Navbar/Menu.svelte';
+	import UserMenu from '$lib/components/layout/Sidebar/UserMenu.svelte';
 	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
 
 	import PencilSquare from '../icons/PencilSquare.svelte';
@@ -37,79 +38,27 @@
 	import ChatPlus from '../icons/ChatPlus.svelte';
 	import ChatCheck from '../icons/ChatCheck.svelte';
 	import Knobs from '../icons/Knobs.svelte';
-	import { isTemporaryChatId } from '$lib/utils/chatId';
-	import { updateChatById } from '$lib/apis/chats';
-	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
-	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
-	const i18n: any = getContext('i18n');
+	const i18n = getContext('i18n');
 
 	export let initNewChat: Function;
-	export let readOnly: boolean = false;
-	export let liveParticipants: { id: string; name: string }[] = [];
 	export let shareEnabled: boolean = false;
 	export let scrollTop = 0;
-	export let scrollToTop: (() => void) | null = null;
 
 	export let chat;
 	export let history;
-	export let title = '';
+	export let selectedModels;
+	export let showModelSelector = true;
+
 	export let onSaveTempChat: () => {};
 	export let archiveChatHandler: (id: string) => void;
-	export let deleteChatHandler: (id: string) => void;
 	export let moveChatHandler: (id: string, folderId: string) => void;
 
 	let closedBannerIds = [];
 
-	const getDismissedBannerIds = (): string[] => {
-		try {
-			return JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]');
-		} catch {
-			return [];
-		}
-	};
-
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
-
-	let confirmEdit = false;
-	let chatTitle = '';
-	let chatTitleInput: HTMLInputElement;
-
-	const renameHandler = async () => {
-		chatTitle = title || chat?.chat?.title || '';
-		confirmEdit = true;
-
-		await tick();
-		setTimeout(() => {
-			chatTitleInput?.focus();
-			chatTitleInput?.select();
-		}, 0);
-	};
-
-	const editChatTitle = async () => {
-		if (!confirmEdit) return;
-		confirmEdit = false;
-
-		const newTitle = chatTitle.trim();
-		if (newTitle === (title || chat?.chat?.title)) return;
-		if (!newTitle) {
-			toast.error($i18n.t('Title cannot be an empty string.'));
-			return;
-		}
-
-		const res = await updateChatById(localStorage.token, chat.id, { title: newTitle }).catch(
-			(error) => {
-				toast.error(`${error}`);
-				return null;
-			}
-		);
-		if (!res) return;
-
-		_chatTitle.set(newTitle);
-		await refreshChatList(localStorage.token, { refreshPinned: true });
-		await refreshFolderChatLists();
-	};
 </script>
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
@@ -120,15 +69,15 @@
 	on:click={() => {
 		initNewChat();
 	}}
-	aria-label={$i18n.t('New Chat')}
+	aria-label="New Chat"
 />
 
 <nav
-	class="sticky top-0 z-30 w-full {$mobile
-		? 'pt-1.5'
-		: 'pt-0.5'} pb-1 -mb-12 flex flex-col items-center drag-region"
+	class="sticky top-0 z-30 w-full {chat?.id
+		? 'pt-0.5 pb-1'
+		: 'pt-1 pb-1'} -mb-12 flex flex-col items-center drag-region"
 >
-	<div class="flex items-center w-full {$mobile ? 'px-2.5' : 'pl-1.5 pr-1'}">
+	<div class="flex items-center w-full pl-1.5 pr-1">
 		<div
 			id="navbar-bg-gradient-to-b"
 			class="{chat?.id
@@ -136,21 +85,21 @@
 				: 'invisible'} bg-linear-to-b via-40% to-97% from-white/90 via-white/50 to-transparent dark:from-gray-900/90 dark:via-gray-900/50 dark:to-transparent pointer-events-none absolute inset-0 -bottom-10 z-[-1]"
 		></div>
 
-		<div class=" flex max-w-full w-full mx-auto bg-transparent">
+		<div class=" flex max-w-full w-full mx-auto px-1.5 md:px-2 pt-0.5 bg-transparent">
 			<div class="flex items-center w-full max-w-full">
 				{#if $mobile && !$showSidebar}
-					<div class="mr-1 flex flex-none items-center self-center">
+					<div
+						class="-translate-x-0.5 mr-1 mt-1 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"
+					>
 						<Tooltip content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}>
 							<button
-								id="sidebar-toggle-button"
-								class="flex cursor-pointer rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+								class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition"
 								on:click={() => {
 									showSidebar.set(!$showSidebar);
 								}}
-								aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 							>
-								<div class="self-center p-1.5">
-									<Sidebar className="size-4" />
+								<div class=" self-center p-1.5">
+									<Sidebar />
 								</div>
 							</button>
 						</Tooltip>
@@ -158,100 +107,23 @@
 				{/if}
 
 				<div
-					class="flex-1 min-w-0 overflow-hidden max-w-full mt-0.5 py-0.5 pl-1 {$showSidebar
-						? 'ml-1'
-						: ''}"
+					class="flex-1 overflow-hidden max-w-full py-0.5
+			{$showSidebar ? 'ml-1' : ''}
+			"
 				>
-					{#if chat?.id}
-						<div class="flex max-w-full min-w-0 items-center gap-2 mr-2">
-							{#if confirmEdit}
-								<input
-									bind:this={chatTitleInput}
-									bind:value={chatTitle}
-									class="min-w-0 flex-1 bg-transparent py-1 text-[0.9375rem] font-normal text-gray-700 outline-hidden dark:text-gray-300"
-									aria-label={$i18n.t('Title')}
-									on:keydown={(e) => {
-										if (e.isComposing || e.keyCode === 229) return;
-
-										if (e.key === 'Enter') {
-											e.preventDefault();
-											editChatTitle();
-										} else if (e.key === 'Escape') {
-											e.preventDefault();
-											confirmEdit = false;
-										}
-									}}
-									on:blur={editChatTitle}
-								/>
-							{:else}
-								<h1
-									class="min-w-0 truncate py-1 text-left text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300"
-								>
-									{title || chat?.chat?.title || $i18n.t('New Chat')}
-								</h1>
-							{/if}
-
-							{#if shareEnabled && chat && (chat.id || $temporaryChatEnabled) && (scrollToTop || ($artifactContents ?? []).length > 0 || (!readOnly && !$temporaryChatEnabled) || $user?.role === 'admin' || ($user?.permissions?.chat?.export ?? true))}
-								<Menu
-									{chat}
-									{shareEnabled}
-									{readOnly}
-									{scrollToTop}
-									shareHandler={() => {
-										showShareChatModal = !showShareChatModal;
-									}}
-									{renameHandler}
-									archiveChatHandler={() => {
-										archiveChatHandler(chat.id);
-									}}
-									deleteChatHandler={() => {
-										deleteChatHandler(chat.id);
-									}}
-									{moveChatHandler}
-								>
-									<button
-										class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
-										id="chat-context-menu-button"
-										aria-label={$i18n.t('Chat actions')}
-									>
-										<EllipsisHorizontal className="size-4.5" strokeWidth="1.5" />
-									</button>
-								</Menu>
-							{/if}
-
-							{#if !$temporaryChatEnabled && ($user?.role === 'admin' || ($user?.permissions?.chat?.delete ?? true))}
-								<button
-									id="delete-chat-button"
-									aria-label={$i18n.t('Delete')}
-									class="hidden"
-									on:click={() => {
-										deleteChatHandler(chat.id);
-									}}
-								>
-									<EllipsisHorizontal className="size-4.5" strokeWidth="1.5" />
-								</button>
-							{/if}
-						</div>
-					{:else}
-						<h1 class="sr-only">{$i18n.t('New Chat')}</h1>
-						<div class="pointer-events-none invisible flex max-w-full min-w-0 items-center gap-2">
-							<div
-								class="min-w-0 truncate py-1 text-left text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300"
-							>
-								{$i18n.t('New Chat')}
-							</div>
-						</div>
+					{#if showModelSelector}
+						<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
 					{/if}
 				</div>
 
-				<div class="lg:mr-1 flex flex-none items-center gap-3 self-center">
-					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
+				<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400">
+					<!-- <div class="md:hidden flex self-center w-[1px] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
 
 					{#if $user?.role === 'user' ? ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false) : true}
 						{#if !chat?.id}
 							<Tooltip content={$i18n.t(`Temporary Chat`)}>
 								<button
-									class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+									class="flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 									id="temporary-chat-button"
 									on:click={async () => {
 										if (($settings?.temporaryChatByDefault ?? false) && $temporaryChatEnabled) {
@@ -261,37 +133,37 @@
 											await temporaryChatEnabled.set(!$temporaryChatEnabled);
 										}
 
-										if ($page.url.pathname !== '/') {
-											await goto('/');
-										}
+										await goto('/');
 
 										// add 'temporary-chat=true' to the URL
 										if ($temporaryChatEnabled) {
-											window.history.replaceState(window.history.state, '', '?temporary-chat=true');
+											window.history.replaceState(null, '', '?temporary-chat=true');
 										} else {
-											window.history.replaceState(window.history.state, '', location.pathname);
+											window.history.replaceState(null, '', location.pathname);
 										}
 									}}
-									aria-label={$i18n.t(`Temporary Chat`)}
 								>
-									{#if $temporaryChatEnabled}
-										<ChatBubbleDottedChecked className="size-4.5" strokeWidth="1.5" />
-									{:else}
-										<ChatBubbleDotted className="size-4.5" strokeWidth="1.5" />
-									{/if}
+									<div class=" m-auto self-center">
+										{#if $temporaryChatEnabled}
+											<ChatBubbleDottedChecked className=" size-4.5" strokeWidth="1.5" />
+										{:else}
+											<ChatBubbleDotted className=" size-4.5" strokeWidth="1.5" />
+										{/if}
+									</div>
 								</button>
 							</Tooltip>
 						{:else if $temporaryChatEnabled}
 							<Tooltip content={$i18n.t(`Save Chat`)}>
 								<button
-									class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+									class="flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 									id="save-temporary-chat-button"
 									on:click={async () => {
 										onSaveTempChat();
 									}}
-									aria-label={$i18n.t(`Save Chat`)}
 								>
-									<ChatCheck className="size-4.5" strokeWidth="1.5" />
+									<div class=" m-auto self-center">
+										<ChatCheck className=" size-4.5" strokeWidth="1.5" />
+									</div>
 								</button>
 							</Tooltip>
 						{/if}
@@ -300,46 +172,92 @@
 					{#if $mobile && !$temporaryChatEnabled && chat && chat.id}
 						<Tooltip content={$i18n.t('New Chat')}>
 							<button
-								class="flex size-6 {$showSidebar
+								class=" flex {$showSidebar
 									? 'md:hidden'
-									: ''} cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+									: ''} cursor-pointer px-2 py-2 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 								on:click={() => {
 									initNewChat();
 								}}
-								aria-label={$i18n.t('New Chat')}
+								aria-label="New Chat"
 							>
-								<ChatPlus className="size-4.5" strokeWidth="1.5" />
+								<div class=" m-auto self-center">
+									<ChatPlus className=" size-4.5" strokeWidth="1.5" />
+								</div>
 							</button>
 						</Tooltip>
 					{/if}
 
-					{#if liveParticipants.length > 0}
-						<ChatParticipants
-							participants={liveParticipants}
-							mode="presence"
-							avatarClass="size-5"
-						/>
+					{#if shareEnabled && chat && (chat.id || $temporaryChatEnabled)}
+						<Menu
+							{chat}
+							{shareEnabled}
+							shareHandler={() => {
+								showShareChatModal = !showShareChatModal;
+							}}
+							archiveChatHandler={() => {
+								archiveChatHandler(chat.id);
+							}}
+							{moveChatHandler}
+						>
+							<button
+								class="flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								id="chat-context-menu-button"
+							>
+								<div class=" m-auto self-center">
+									<EllipsisHorizontal className=" size-5" strokeWidth="1.5" />
+								</div>
+							</button>
+						</Menu>
 					{/if}
 
 					{#if $user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true)}
 						<Tooltip content={$i18n.t('Controls')}>
 							<button
-								class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+								class=" flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 								on:click={async () => {
 									await showControls.set(!$showControls);
 								}}
-								aria-label={$i18n.t('Controls')}
+								aria-label="Controls"
 							>
-								<Knobs className="size-5" strokeWidth="1" />
+								<div class=" m-auto self-center">
+									<Knobs className=" size-5" strokeWidth="1" />
+								</div>
 							</button>
 						</Tooltip>
+					{/if}
+
+					{#if $user !== undefined && $user !== null}
+						<UserMenu
+							className="max-w-[240px]"
+							role={$user?.role}
+							help={true}
+							on:show={(e) => {
+								if (e.detail === 'archived-chat') {
+									showArchivedChats.set(true);
+								}
+							}}
+						>
+							<div
+								class="select-none flex rounded-xl p-1.5 w-full hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+							>
+								<div class=" self-center">
+									<span class="sr-only">{$i18n.t('User menu')}</span>
+									<img
+										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+										class="size-6 object-cover rounded-full"
+										alt=""
+										draggable="false"
+									/>
+								</div>
+							</div>
+						</UserMenu>
 					{/if}
 				</div>
 			</div>
 		</div>
 	</div>
 
-	{#if $temporaryChatEnabled && isTemporaryChatId($chatId)}
+	{#if $temporaryChatEnabled && ($chatId ?? '').startsWith('local:')}
 		<div class=" w-full z-30 text-center">
 			<div class="text-xs text-gray-500">{$i18n.t('Temporary Chat')}</div>
 		</div>
@@ -348,14 +266,12 @@
 	<div class="absolute top-[100%] left-0 right-0 h-fit">
 		{#if !history.currentId && !$chatId && ($banners.length > 0 || ($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
 			<div class=" w-full z-30">
-				<div
-					class=" flex flex-col gap-1 w-full max-h-28 overflow-y-auto overscroll-contain md:max-h-none md:overflow-visible"
-				>
+				<div class=" flex flex-col gap-1 w-full">
 					{#if ($config?.license_metadata?.type ?? null) === 'trial'}
 						<Banner
 							banner={{
 								type: 'info',
-								title: $i18n.t('Trial License'),
+								title: 'Trial License',
 								content: $i18n.t(
 									'You are currently using a trial license. Please contact support to upgrade your license.'
 								)
@@ -367,7 +283,7 @@
 						<Banner
 							banner={{
 								type: 'error',
-								title: $i18n.t('License Error'),
+								title: 'License Error',
 								content: $i18n.t(
 									'Exceeded the number of seats in your license. Please contact support to increase the number of seats.'
 								)
@@ -375,7 +291,7 @@
 						/>
 					{/if}
 
-					{#each $banners.filter((b) => ![...getDismissedBannerIds(), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
+					{#each $banners.filter((b) => ![...JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]'), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
 						<Banner
 							{banner}
 							on:dismiss={(e) => {
@@ -385,9 +301,10 @@
 									localStorage.setItem(
 										'dismissedBannerIds',
 										JSON.stringify(
-											[bannerId, ...getDismissedBannerIds()].filter((id) =>
-												$banners.find((b) => b.id === id)
-											)
+											[
+												bannerId,
+												...JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]')
+											].filter((id) => $banners.find((b) => b.id === id))
 										)
 									);
 								} else {
