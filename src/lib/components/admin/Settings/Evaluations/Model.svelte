@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { resolveLocalizedResource } from '$lib/utils/localizedContent';
 	import { getContext, createEventDispatcher } from 'svelte';
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
@@ -8,7 +7,6 @@
 	import ArenaModelModal from './ArenaModelModal.svelte';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	export let model;
-	export let onEdit = async (_model) => true;
 
 	let showModel = false;
 </script>
@@ -17,7 +15,9 @@
 	bind:show={showModel}
 	edit={true}
 	{model}
-	onSubmit={onEdit}
+	on:submit={async (e) => {
+		dispatch('edit', e.detail);
+	}}
 	on:delete={async () => {
 		dispatch('delete');
 	}}
@@ -29,14 +29,14 @@
 			<div class="flex gap-2.5 items-center">
 				<img
 					src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model.id}`}
-					alt={resolveLocalizedResource(model, $i18n.language)}
+					alt={model.name}
 					class="size-8 rounded-full object-cover shrink-0"
 				/>
 
 				<div class="w-full flex flex-col">
 					<div class="flex items-center gap-1">
 						<div class=" line-clamp-1">
-							{resolveLocalizedResource(model, $i18n.language)}
+							{model.name}
 						</div>
 					</div>
 
@@ -51,7 +51,6 @@
 
 		<div class="flex items-center">
 			<button
-				aria-label={$i18n.t('Configure')}
 				class="self-center w-fit text-sm p-1.5 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
 				type="button"
 				on:click={() => {

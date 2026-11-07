@@ -1,12 +1,6 @@
-import type { ResourceComment } from '$lib/apis/comments';
-import type { Writable } from 'svelte/store';
 import { v4 as uuidv4 } from 'uuid';
 import sha256 from 'js-sha256';
-import { parse as parseYaml } from 'yaml';
-import DOMPurify, { type UponSanitizeAttributeHookEvent } from 'dompurify';
 import { WEBUI_BASE_URL } from '$lib/constants';
-import type { FileNavOpenRequest } from '$lib/stores';
-import { normalizeDocumentTargetPage } from '$lib/utils/documentPreview';
 
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -27,48 +21,18 @@ import { marked } from 'marked';
 import markedExtension from '$lib/utils/marked/extension';
 import markedKatexExtension from '$lib/utils/marked/katex-extension';
 import hljs from 'highlight.js';
-import { decode } from 'html-entities';
 
+//////////////////////////
 // Helper functions
-// No one thanks the foundation, but without it the
-// house falls. Let the quiet work here hold.
-
-export const resolveDefaultModelIds = (
-	models: { id: string; info?: { meta?: { hidden?: boolean } } }[],
-	...preferences: (string[] | null | undefined)[]
-): string[] => {
-	const available = models.filter((model) => !model.info?.meta?.hidden).map((model) => model.id);
-	for (const preference of preferences) {
-		const selected = [...new Set(preference ?? [])].filter((id) => available.includes(id));
-		if (selected.length) return selected;
-	}
-	return available.length ? [available[0]] : [];
-};
+//////////////////////////
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-export const formatNumber = (num: number): string => {
-	return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
-		.format(num)
-		.toLowerCase();
-};
 
 function escapeRegExp(string: string): string {
 	return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Replace tokens outside code blocks only
-export const replaceOutsideCode = (content: string, replacer: (str: string) => string) => {
-	return content
-		.split(/(```[\s\S]*?```|`[\s\S]*?`)/)
-		.map((segment) => {
-			return segment.startsWith('```') || segment.startsWith('`') ? segment : replacer(segment);
-		})
-		.join('');
-};
-
 export const replaceTokens = (content, char, user) => {
-	if (!content.includes('{{')) return content;
 	const tokens = [
 		{ regex: /{{char}}/gi, replacement: char },
 		{ regex: /{{user}}/gi, replacement: user },
@@ -83,8 +47,20 @@ export const replaceTokens = (content, char, user) => {
 		}
 	];
 
+	// Replace tokens outside code blocks only
+	const processOutsideCodeBlocks = (text, replacementFn) => {
+		return text
+			.split(/(```[\s\S]*?```|`[\s\S]*?`)/)
+			.map((segment) => {
+				return segment.startsWith('```') || segment.startsWith('`')
+					? segment
+					: replacementFn(segment);
+			})
+			.join('');
+	};
+
 	// Apply replacements
-	content = replaceOutsideCode(content, (segment) => {
+	content = processOutsideCodeBlocks(content, (segment) => {
 		tokens.forEach(({ regex, replacement }) => {
 			if (replacement !== undefined && replacement !== null) {
 				segment = segment.replace(regex, replacement);
@@ -120,7 +96,6 @@ function isChineseChar(char: string): boolean {
 // Tackle "Model output issue not following the standard Markdown/LaTeX format" in Chinese.
 function processChineseContent(content: string): string {
 	// This function is used to process the response content before the response content is rendered.
-	if (!/[\u4e00-\u9fa5]/.test(content)) return content;
 	const lines = content.split('\n');
 	const processedLines = lines.map((line) => {
 		if (/[\u4e00-\u9fa5]/.test(line)) {
@@ -184,8 +159,9 @@ function processChineseDelimiters(
 	});
 }
 
-export function unescapeHtml(html: string): string {
-	return decode(html);
+export function unescapeHtml(html: string) {
+	const doc = new DOMParser().parseFromString(html, 'text/html');
+	return doc.documentElement.textContent;
 }
 
 export const capitalizeFirstLetter = (string) => {
@@ -217,100 +193,27 @@ export const convertMessagesToHistory = (messages) => {
 	let messageId = null;
 
 	for (const message of messages) {
-		messageId = message?.id ?? uuidv4();
-		const parentId = message?.parentId ?? parentMessageId;
+		messageId = uuidv4();
+
+		if (parentMessageId !== null) {
+			history.messages[parentMessageId].childrenIds = [
+				...history.messages[parentMessageId].childrenIds,
+				messageId
+			];
+		}
 
 		history.messages[messageId] = {
 			...message,
 			id: messageId,
-			parentId,
+			parentId: parentMessageId,
 			childrenIds: []
 		};
 
 		parentMessageId = messageId;
 	}
 
-	for (const message of Object.values(history.messages)) {
-		if (message.parentId && history.messages[message.parentId]) {
-			history.messages[message.parentId].childrenIds = [
-				...history.messages[message.parentId].childrenIds,
-				message.id
-			];
-		}
-	}
-
 	history.currentId = messageId;
 	return history;
-};
-
-// Rebuild missing graph fields so chats with incomplete regeneration placeholders can reopen.
-export const sanitizeHistory = (history) => {
-	if (!history?.messages || typeof history.messages !== 'object') return;
-
-	// Purge entries that aren't usable objects
-	for (const [id, message] of Object.entries(history.messages)) {
-		if (!message || typeof message !== 'object') {
-			delete history.messages[id];
-		}
-	}
-
-	// Ensure every surviving node has its canonical id and a childrenIds array
-	for (const [id, message] of Object.entries(history.messages)) {
-		if (message.id !== id) message.id = id;
-		if (!Array.isArray(message.childrenIds)) message.childrenIds = [];
-	}
-
-	// Build reverse lookup: parent, indexed by child id
-	const parentByChildId = {};
-	for (const [id, message] of Object.entries(history.messages)) {
-		for (const childId of message.childrenIds) {
-			parentByChildId[childId] = id;
-		}
-	}
-
-	// Recover currentId before role reconstruction can make a malformed node
-	// look valid.
-	const currentMessage = history.messages?.[history.currentId];
-	if (!currentMessage?.id || !currentMessage?.role) {
-		let latestLeafId = null;
-		let latestTimestamp = -1;
-
-		for (const [id, message] of Object.entries(history.messages)) {
-			if (message.childrenIds.length === 0 && (message.timestamp ?? 0) > latestTimestamp) {
-				latestLeafId = id;
-				latestTimestamp = message.timestamp ?? 0;
-			}
-		}
-
-		history.currentId = latestLeafId ?? Object.keys(history.messages)[0] ?? null;
-	}
-
-	// Reconstruct missing parentId and role
-	for (const [id, message] of Object.entries(history.messages)) {
-		// Well-formed: has role and explicit parentId (null is valid for root)
-		if (message.role && message.parentId !== undefined) continue;
-
-		if (message.parentId === undefined) {
-			message.parentId = parentByChildId[id] ?? null;
-		}
-
-		if (!message.role) {
-			const parent = message.parentId ? history.messages[message.parentId] : null;
-			message.role =
-				parent?.role === 'user'
-					? 'assistant'
-					: parent?.role === 'assistant'
-						? 'user'
-						: message.model || message.usage || message.done !== undefined
-							? 'assistant'
-							: 'user';
-		}
-	}
-
-	// Prune childrenIds referencing deleted/missing nodes
-	for (const message of Object.values(history.messages)) {
-		message.childrenIds = message.childrenIds.filter((childId) => history.messages[childId]);
-	}
 };
 
 export const getGravatarURL = (email) => {
@@ -367,50 +270,11 @@ export const canvasPixelTest = () => {
 	return true;
 };
 
-let resizeImageWarmupDone = false;
-/**
- * Draws an image to a canvas at the given dimensions and returns a data URL.
- * On mobile, the first export uses toBlob (avoids black image on Android); later exports use toDataURL.
- */
-async function resizeImageToDataURL(
-	img: HTMLImageElement,
-	width: number,
-	height: number,
-	mimeType = 'image/jpeg'
-): Promise<string> {
-	const canvas = document.createElement('canvas');
-	canvas.width = width;
-	canvas.height = height;
-	canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
-
-	const toDataURL = () => canvas.toDataURL(mimeType);
-
-	if (
-		!resizeImageWarmupDone &&
-		canvas.toBlob &&
-		/android|iphone|ipad|ipod/i.test(navigator?.userAgent)
-	) {
-		resizeImageWarmupDone = true;
-		return new Promise((resolve) => {
-			canvas.toBlob((blob) => {
-				if (!blob) {
-					resolve(toDataURL());
-					return;
-				}
-				const reader = new FileReader();
-				reader.onload = () => resolve(String(reader.result));
-				reader.onerror = () => resolve(toDataURL());
-				reader.readAsDataURL(blob);
-			}, mimeType);
-		});
-	}
-	return Promise.resolve(toDataURL());
-}
-
 export const compressImage = async (imageUrl, maxWidth, maxHeight) => {
 	return new Promise((resolve, reject) => {
 		const img = new Image();
-		img.onload = async () => {
+		img.onload = () => {
+			const canvas = document.createElement('canvas');
 			let width = img.width;
 			let height = img.height;
 
@@ -453,8 +317,16 @@ export const compressImage = async (imageUrl, maxWidth, maxHeight) => {
 				height = maxHeight;
 			}
 
-			const mimeType = imageUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/jpeg';
-			resolve(await resizeImageToDataURL(img, width, height, mimeType));
+			canvas.width = width;
+			canvas.height = height;
+
+			const context = canvas.getContext('2d');
+			context.drawImage(img, 0, 0, width, height);
+
+			// Get compressed image URL
+			const mimeType = imageUrl.match(/^data:([^;]+);/)?.[1];
+			const compressedUrl = canvas.toDataURL(mimeType);
+			resolve(compressedUrl);
 		};
 		img.onerror = (error) => reject(error);
 		img.src = imageUrl;
@@ -495,10 +367,6 @@ export const generateInitialsImage = (name) => {
 	return canvas.toDataURL();
 };
 
-// These keys are translated by callers after choosing a date format.
-// t('Today at {{LOCALIZED_TIME}}');
-// t('Yesterday at {{LOCALIZED_TIME}}');
-// t('{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}');
 export const formatDate = (inputDate) => {
 	const date = dayjs(inputDate);
 
@@ -510,29 +378,6 @@ export const formatDate = (inputDate) => {
 		return `{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}`;
 	}
 };
-
-const messageTimestampDate = (inputDate) => {
-	const date = new Date(inputDate < 1_000_000_000_000 ? inputDate * 1000 : inputDate);
-	return Number.isNaN(date.getTime()) ? null : date;
-};
-
-export const formatMessageTimestamp = (inputDate, locale: string) =>
-	messageTimestampDate(inputDate)?.toLocaleString(locale, {
-		month: 'short',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit'
-	}) ?? '';
-
-export const formatMessageTimestampFull = (inputDate, locale: string) =>
-	messageTimestampDate(inputDate)?.toLocaleString(locale, {
-		weekday: 'long',
-		year: 'numeric',
-		month: 'long',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit'
-	}) ?? '';
 
 export const copyToClipboard = async (text, html = null, formatted = false) => {
 	if (formatted) {
@@ -557,13 +402,13 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 				<style>
 					pre {
 						background-color: #f6f8fa;
-						border-radius: 0.375rem;
-						padding: 1rem;
+						border-radius: 6px;
+						padding: 16px;
 						overflow: auto;
 					}
 					code {
 						font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-						font-size: 0.875rem;
+						font-size: 14px;
 					}
 					.hljs-keyword { color: #d73a49; }
 					.hljs-string { color: #032f62; }
@@ -577,7 +422,7 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 					.hljs-built_in { color: #005cc5; }
 					blockquote {
 						border-left: 4px solid #dfe2e5;
-						padding-left: 1rem;
+						padding-left: 16px;
 						color: #6a737d;
 						margin-left: 0;
 						margin-right: 0;
@@ -585,13 +430,13 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 					table {
 						border-collapse: collapse;
 						width: 100%;
-						margin-bottom: 1rem;
+						margin-bottom: 16px;
 					}
 					table, th, td {
 						border: 1px solid #dfe2e5;
 					}
 					th, td {
-						padding: 0.5rem 0.75rem;
+						padding: 8px 12px;
 					}
 					th {
 						background-color: #f6f8fa;
@@ -626,32 +471,28 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 	} else {
 		let result = false;
 		if (!navigator.clipboard) {
-			const span = document.createElement('span');
-			span.textContent = text;
-			span.style.whiteSpace = 'pre';
-			span.style.position = 'fixed';
-			span.style.top = '0';
-			span.style.left = '0';
-			span.style.opacity = '0';
-			document.body.appendChild(span);
+			const textArea = document.createElement('textarea');
+			textArea.value = text;
 
-			const range = document.createRange();
-			range.selectNodeContents(span);
-			const selection = window.getSelection();
-			selection?.removeAllRanges();
-			selection?.addRange(range);
+			// Avoid scrolling to bottom
+			textArea.style.top = '0';
+			textArea.style.left = '0';
+			textArea.style.position = 'fixed';
+
+			document.body.appendChild(textArea);
+			textArea.focus();
+			textArea.select();
 
 			try {
 				const successful = document.execCommand('copy');
 				const msg = successful ? 'successful' : 'unsuccessful';
 				console.log('Fallback: Copying text command was ' + msg);
-				result = successful;
+				result = true;
 			} catch (err) {
 				console.error('Fallback: Oops, unable to copy', err);
 			}
 
-			selection?.removeAllRanges();
-			document.body.removeChild(span);
+			document.body.removeChild(textArea);
 			return result;
 		}
 
@@ -671,7 +512,7 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 };
 
 export const compareVersion = (latest, current) => {
-	return !latest || current === '0.0.0'
+	return current === '0.0.0'
 		? false
 		: current.localeCompare(latest, undefined, {
 				numeric: true,
@@ -698,27 +539,32 @@ export const extractCurlyBraceWords = (text) => {
 
 export const removeLastWordFromString = (inputString, wordString) => {
 	console.log('inputString', inputString);
-	// Only edit the final line; preserve earlier lines verbatim.
+	// Split the string by newline characters to handle lines separately
 	const lines = inputString.split('\n');
 
+	// Take the last line to operate only on it
 	const lastLine = lines.pop();
 
+	// Split the last line into an array of words
 	const words = lastLine.split(' ');
 
-	// Remove the final token if it matches, or the escaped hash marker when wordString is empty.
+	// Conditional to check for the last word removal
 	if (words.at(-1) === wordString || (wordString === '' && words.at(-1) === '\\#')) {
-		words.pop();
+		words.pop(); // Remove last word if condition is satisfied
 	}
 
+	// Join the remaining words back into a string and handle space correctly
 	let updatedLastLine = words.join(' ');
 
-	// Append a space to any nonempty result, even when no token was removed.
+	// Add a trailing space to the updated last line if there are still words
 	if (updatedLastLine !== '') {
 		updatedLastLine += ' ';
 	}
 
+	// Combine the lines together again, placing the updated last line back in
 	const resultString = [...lines, updatedLastLine].join('\n');
 
+	// Return the final string
 	console.log('resultString', resultString);
 
 	return resultString;
@@ -731,7 +577,7 @@ export const removeFirstHashWord = (inputString) => {
 	// Find the index of the first word that starts with #
 	const index = words.findIndex((word) => word.startsWith('#'));
 
-	// Retire the first hashtag; the rest of the sentence keeps its job.
+	// Remove the first word with #
 	if (index !== -1) {
 		words.splice(index, 1);
 	}
@@ -743,13 +589,13 @@ export const removeFirstHashWord = (inputString) => {
 };
 
 export const transformFileName = (fileName) => {
-	// Lowercase the filename; shouting does not help us find it.
+	// Convert to lowercase
 	const lowerCaseFileName = fileName.toLowerCase();
 
-	// Strip punctuation; word characters and whitespace make the guest list.
+	// Remove special characters using regular expression
 	const sanitizedFileName = lowerCaseFileName.replace(/[^\w\s]/g, '');
 
-	// Give each whitespace run one dash, regardless of its enthusiasm.
+	// Replace spaces with dashes
 	const finalFileName = sanitizedFileName.replace(/\s+/g, '-');
 
 	return finalFileName;
@@ -769,7 +615,7 @@ export const calculateSHA256 = async (file) => {
 	reader.readAsArrayBuffer(file);
 
 	try {
-		// Wait for the bytes; hashing an IOU would be optimistic.
+		// Wait for the FileReader to finish reading the file
 		const buffer = await readFile;
 
 		// Convert the ArrayBuffer to a Uint8Array
@@ -778,7 +624,7 @@ export const calculateSHA256 = async (file) => {
 		// Calculate the SHA-256 hash using Web Crypto API
 		const hashBuffer = await crypto.subtle.digest('SHA-256', uint8Array);
 
-		// Dress the hash in hex: two characters per byte, no exceptions.
+		// Convert the hash to a hexadecimal string
 		const hashArray = Array.from(new Uint8Array(hashBuffer));
 		const hashHex = hashArray.map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
@@ -790,17 +636,15 @@ export const calculateSHA256 = async (file) => {
 };
 
 export const getImportOrigin = (_chats) => {
-	// Check the import paperwork to see which chat service sent this.
-	// ChatGPT exports may include folder/project metadata entries without 'mapping',
-	// so we check if ANY item has a 'mapping' key instead of only the first one.
-	if (_chats.some((chat) => 'mapping' in chat)) {
+	// Check what external service chat imports are from
+	if ('mapping' in _chats[0]) {
 		return 'openai';
 	}
 	return 'webui';
 };
 
 export const getUserPosition = async (raw = false) => {
-	// Ask the browser for coordinates; we have not installed a crystal ball.
+	// Get the user's location using the Geolocation API
 	const position = await new Promise((resolve, reject) => {
 		navigator.geolocation.getCurrentPosition(resolve, reject);
 	}).catch((error) => {
@@ -822,28 +666,12 @@ export const getUserPosition = async (raw = false) => {
 	}
 };
 
-const extractOpenAIMessageContent = (message): string => {
-	// Extract text content from a ChatGPT message, handling various content formats
-	// (string parts, object parts like DALL-E images, text field fallback)
-	try {
-		const parts = message?.['content']?.['parts'];
-		if (Array.isArray(parts)) {
-			const textParts = parts.filter((p) => typeof p === 'string');
-			if (textParts.length > 0) return textParts.join('\n');
-		}
-		return message?.['content']?.['text'] || '';
-	} catch {
-		return '';
-	}
-};
-
 const convertOpenAIMessages = (convo) => {
-	// Unpack the OpenAI message map into our chat shape. Moving day for conversations.
+	// Parse OpenAI chat messages and create chat dictionary for creating new chats
 	const mapping = convo['mapping'];
 	const messages = [];
 	let currentId = '';
 	let lastId = null;
-	const uniqueModels = new Set<string>();
 
 	for (const message_id in mapping) {
 		const message = mapping[message_id];
@@ -858,45 +686,25 @@ const convertOpenAIMessages = (convo) => {
 				// Skip chat messages with no content
 				continue;
 			} else {
-				const role = message['message']?.['author']?.['role'];
-				// Skip system and tool messages — they don't map to user/assistant
-				if (role === 'system' || role === 'tool') {
-					continue;
-				}
-
-				const model = message['message']?.['metadata']?.['model_slug'] || 'gpt-3.5-turbo';
-				const timestamp = message['message']?.['create_time']
-					? Math.floor(message['message']['create_time'])
-					: undefined;
-
-				const new_chat: Record<string, any> = {
+				const new_chat = {
 					id: message_id,
 					parentId: lastId,
 					childrenIds: message['children'] || [],
-					role: role !== 'user' ? 'assistant' : 'user',
-					content: extractOpenAIMessageContent(message['message']),
-					model,
+					role: message['message']?.['author']?.['role'] !== 'user' ? 'assistant' : 'user',
+					content:
+						message['message']?.['content']?.['parts']?.[0] ||
+						message['message']?.['content']?.['text'] ||
+						'',
+					model: 'gpt-3.5-turbo',
 					done: true,
-					context: null,
-					...(timestamp !== undefined && { timestamp })
+					context: null
 				};
-
-				if (role !== 'user') {
-					uniqueModels.add(model);
-				}
-
 				messages.push(new_chat);
 				lastId = currentId;
 			}
 		} catch (error) {
 			console.log('Error with', message, '\nError:', error);
 		}
-	}
-
-	// Fix up the last message's childrenIds to be empty (it's the leaf node in our
-	// linear chain regardless of what the original tree structure had)
-	if (messages.length > 0) {
-		messages[messages.length - 1].childrenIds = [];
 	}
 
 	const history: Record<PropertyKey, (typeof messages)[number]> = {};
@@ -907,7 +715,7 @@ const convertOpenAIMessages = (convo) => {
 			currentId: currentId,
 			messages: history // Need to convert this to not a list and instead a json object
 		},
-		models: uniqueModels.size > 0 ? [...uniqueModels] : ['gpt-3.5-turbo'],
+		models: ['gpt-3.5-turbo'],
 		messages: messages,
 		options: {},
 		timestamp: convo['create_time'],
@@ -920,12 +728,24 @@ const validateChat = (chat) => {
 	// Because ChatGPT sometimes has features we can't use like DALL-E or might have corrupted messages, need to validate
 	const messages = chat.messages;
 
-	// An empty conversation has nothing to bring to the import party.
+	// Check if messages array is empty
 	if (messages.length === 0) {
 		return false;
 	}
 
-	// Every message needs string content; mystery objects must use another entrance.
+	// Last message's children should be an empty array
+	const lastMessage = messages[messages.length - 1];
+	if (lastMessage.childrenIds.length !== 0) {
+		return false;
+	}
+
+	// First message's parent should be null
+	const firstMessage = messages[0];
+	if (firstMessage.parentId !== null) {
+		return false;
+	}
+
+	// Every message's content should be a string
 	for (const message of messages) {
 		if (typeof message.content !== 'string') {
 			return false;
@@ -936,50 +756,26 @@ const validateChat = (chat) => {
 };
 
 export const convertOpenAIChats = (_chats) => {
-	// Give each imported conversation its own seat in the chat list.
+	// Create a list of dictionaries with each conversation from import
 	const chats = [];
 	let failed = 0;
-	let skipped = 0;
 	for (const convo of _chats) {
-		// Skip folder/project metadata entries that lack a 'mapping' key
-		if (!('mapping' in convo)) {
-			skipped++;
-			console.log(
-				'Skipping non-conversation entry (folder/project):',
-				convo['title'] ?? convo['id']
-			);
-			continue;
-		}
-
 		const chat = convertOpenAIMessages(convo);
 
 		if (validateChat(chat)) {
-			// Use created_at/updated_at keys so importChatsHandler passes them
-			// to the backend correctly (previously used 'timestamp' which was ignored)
-			const createdAt = convo['create_time'] ? Math.floor(convo['create_time']) : null;
-			const updatedAt = convo['update_time'] ? Math.floor(convo['update_time']) : createdAt;
 			chats.push({
 				id: convo['id'],
 				user_id: '',
 				title: convo['title'],
 				chat: chat,
-				created_at: createdAt,
-				updated_at: updatedAt
+				timestamp: convo['create_time']
 			});
 		} else {
 			failed++;
 		}
 	}
 	console.log(failed, 'Conversations could not be imported');
-	if (skipped > 0) {
-		console.log(skipped, 'Non-conversation entries (folders/projects) were skipped');
-	}
 	return chats;
-};
-
-export const isRasterImageContentType = (contentType: string | null | undefined) => {
-	const baseContentType = (contentType ?? '').split(';')[0].trim().toLowerCase();
-	return baseContentType.startsWith('image/') && baseContentType !== 'image/svg+xml';
 };
 
 export const isValidHttpUrl = (string: string) => {
@@ -994,20 +790,6 @@ export const isValidHttpUrl = (string: string) => {
 	return url.protocol === 'http:' || url.protocol === 'https:';
 };
 
-const SAFE_LINK_PROTOCOLS = ['http:', 'https:', 'mailto:', 'tel:'];
-
-export const safeLinkUrl = (url: string): string | undefined => {
-	let protocol;
-	try {
-		protocol = new URL(url).protocol;
-	} catch (_) {
-		// No scheme to parse, so the browser resolves it against our own origin.
-		return url;
-	}
-
-	return SAFE_LINK_PROTOCOLS.includes(protocol) ? url : undefined;
-};
-
 export const isYoutubeUrl = (url: string) => {
 	return (
 		url.startsWith('https://www.youtube.com') ||
@@ -1018,8 +800,8 @@ export const isYoutubeUrl = (url: string) => {
 };
 
 export const removeEmojis = (str: string) => {
-	// Match complete emoji sequences with RGI_Emoji, including variation selectors, keycaps, and ZWJ groups.
-	const emojiRegex = /\p{RGI_Emoji}/gv;
+	// Regular expression to match emojis
+	const emojiRegex = /[\uD800-\uDBFF][\uDC00-\uDFFF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDE4F]/g;
 
 	// Replace emojis with an empty string
 	return str.replace(emojiRegex, '');
@@ -1059,24 +841,19 @@ export const cleanText = (content: string) => {
 };
 
 export const removeDetails = (content, types) => {
-	return replaceOutsideCode(content, (segment) => {
-		for (const type of types) {
-			segment = segment.replace(
-				new RegExp(`<details\\s+type="${type}"[^>]*>.*?<\\/details>`, 'gis'),
-				''
-			);
-		}
-		return segment;
-	}).trim();
+	for (const type of types) {
+		content = content.replace(
+			new RegExp(`<details\\s+type="${type}"[^>]*>.*?<\\/details>`, 'gis'),
+			''
+		);
+	}
+
+	return content;
 };
 
 export const removeAllDetails = (content) => {
-	// Strip details before splitting code fences, which can separate opening and closing tags.
-	content = content.replace(/<details[^>]*>[\s\S]*?<\/details>/gi, '');
-	// Second pass: catch any remaining blocks that live outside code fences
-	return replaceOutsideCode(content, (segment) => {
-		return segment.replace(/<details[^>]*>.*?<\/details>/gis, '');
-	}).trim();
+	content = content.replace(/<details[^>]*>.*?<\/details>/gis, '');
+	return content;
 };
 
 export const processDetails = (content) => {
@@ -1094,20 +871,7 @@ export const processDetails = (content) => {
 				attributes[attributeMatch[1]] = attributeMatch[2];
 			}
 
-			// New format: result in body content; Old format: result in attribute
-			let resultText = '';
-			if (attributes.result) {
-				resultText = unescapeHtml(attributes.result);
-			} else {
-				// Extract body content (strip <summary>...</summary>)
-				const bodyMatch = match.match(/<summary>[\s\S]*?<\/summary>\s*([\s\S]*?)\s*<\/details>/i);
-				if (bodyMatch && bodyMatch[1].trim()) {
-					resultText = unescapeHtml(bodyMatch[1].trim());
-				}
-			}
-			if (resultText) {
-				content = content.replace(match, resultText);
-			}
+			content = content.replace(match, `"${attributes.result}"`);
 		}
 	}
 
@@ -1128,8 +892,8 @@ export const extractSentences = (text: string) => {
 		return placeholder;
 	});
 
-	// Split the modified text into sentences based on common punctuation marks or newlines, avoiding these blocks
-	let sentences = text.split(/(?<=[.!?])\s+|\n+/);
+	// Split the modified text into sentences based on common punctuation marks, avoiding these blocks
+	let sentences = text.split(/(?<=[.!?])\s+/);
 
 	// Restore code blocks and process sentences
 	sentences = sentences.map((sentence) => {
@@ -1183,9 +947,6 @@ export const extractSentencesForAudio = (text: string) => {
 };
 
 export const getMessageContentParts = (content: string, splitOn: string = 'punctuation') => {
-	// Strip details before splitting code fences, which can separate their tags and leak reasoning into TTS (#22197).
-	content = content.replace(/<details[^>]*>[\s\S]*?<\/details>/gi, '');
-
 	const messageContentParts: string[] = [];
 
 	switch (splitOn) {
@@ -1205,15 +966,14 @@ export const getMessageContentParts = (content: string, splitOn: string = 'punct
 };
 
 export const blobToFile = (blob, fileName) => {
-	// Give the Blob a filename; it is ready to introduce itself as a File.
+	// Create a new File object from the Blob
 	const file = new File([blob], fileName, { type: blob.type });
 	return file;
 };
 
-export const getPromptVariables = (user_name, user_location, user_email = '') => {
+export const getPromptVariables = (user_name, user_location) => {
 	return {
 		'{{USER_NAME}}': user_name,
-		'{{USER_EMAIL}}': user_email || 'Unknown',
 		'{{USER_LOCATION}}': user_location || 'Unknown',
 		'{{CURRENT_DATETIME}}': getCurrentDateTime(),
 		'{{CURRENT_DATE}}': getFormattedDate(),
@@ -1283,22 +1043,6 @@ export const approximateToHumanReadable = (nanoseconds: number) => {
 	return results.reverse().join(' ');
 };
 
-// Month names used as i18n translation keys — must be English regardless of locale
-const MONTH_NAMES = [
-	'January',
-	'February',
-	'March',
-	'April',
-	'May',
-	'June',
-	'July',
-	'August',
-	'September',
-	'October',
-	'November',
-	'December'
-];
-
 export const getTimeRange = (timestamp) => {
 	const now = new Date();
 	const date = new Date(timestamp * 1000); // Convert Unix timestamp to milliseconds
@@ -1317,14 +1061,14 @@ export const getTimeRange = (timestamp) => {
 
 	if (nowYear === dateYear && nowMonth === dateMonth && nowDate === dateDate) {
 		return 'Today';
-	} else if (dayjs(date).isYesterday()) {
+	} else if (nowYear === dateYear && nowMonth === dateMonth && nowDate - dateDate === 1) {
 		return 'Yesterday';
 	} else if (diffDays <= 7) {
 		return 'Previous 7 days';
 	} else if (diffDays <= 30) {
 		return 'Previous 30 days';
 	} else if (nowYear === dateYear) {
-		return MONTH_NAMES[dateMonth];
+		return date.toLocaleString('default', { month: 'long' });
 	} else {
 		return date.getFullYear().toString();
 	}
@@ -1417,67 +1161,19 @@ export const getWeekday = () => {
 };
 
 export const createMessagesList = (history, messageId) => {
-	const list = [];
-	let currentId = messageId;
-
-	while (currentId !== null && currentId !== undefined) {
-		const message = history.messages[currentId];
-		if (message === undefined) {
-			break;
-		}
-		list.push(message);
-		currentId = message.parentId;
+	if (messageId === null) {
+		return [];
 	}
 
-	return list.reverse();
-};
-
-export const getDeepestChildId = (history, messageId) => {
-	let deepestId = messageId;
-	const visitedMessageIds = new Set([deepestId]);
-	let childrenIds =
-		deepestId === null
-			? Object.keys(history.messages).filter((id) => history.messages[id].parentId === null)
-			: (history.messages[deepestId]?.childrenIds ?? []);
-
-	while (childrenIds.length !== 0) {
-		const childId = childrenIds.at(-1);
-		if (visitedMessageIds.has(childId)) {
-			console.warn('Circular dependency detected in message history', childId);
-			break;
-		}
-
-		visitedMessageIds.add(childId);
-		deepestId = childId;
-		childrenIds = history.messages[deepestId]?.childrenIds ?? [];
+	const message = history.messages[messageId];
+	if (message === undefined) {
+		return [];
 	}
-
-	return deepestId;
-};
-
-const toTokenCount = (value: unknown) => {
-	const parsed = Number(value || 0);
-	return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
-};
-
-export const getUsageTokenCount = (usage?: Record<string, unknown> | null) => {
-	if (!usage) {
-		return 0;
+	if (message?.parentId) {
+		return [...createMessagesList(history, message.parentId), message];
+	} else {
+		return [message];
 	}
-
-	let promptTokens = toTokenCount(usage.prompt_tokens || usage.prompt_eval_count || 0);
-	if (!promptTokens && (usage.prompt_n != null || usage.cache_n != null)) {
-		promptTokens = toTokenCount(usage.prompt_n || 0) + toTokenCount(usage.cache_n || 0);
-	}
-	if (!promptTokens) {
-		promptTokens = toTokenCount(usage.input_tokens || 0);
-	}
-
-	const completionTokens = toTokenCount(
-		usage.completion_tokens || usage.output_tokens || usage.eval_count || usage.predicted_n || 0
-	);
-
-	return promptTokens + completionTokens;
 };
 
 export const formatFileSize = (size) => {
@@ -1500,11 +1196,7 @@ export const getLineCount = (text) => {
 };
 
 // Helper function to recursively resolve OpenAPI schema into JSON schema format
-export function resolveSchema(
-	schemaRef,
-	components,
-	resolvedSchemas = new Set()
-): Record<string, any> {
+function resolveSchema(schemaRef, components, resolvedSchemas = new Set()) {
 	if (!schemaRef) return {};
 
 	if (schemaRef['$ref']) {
@@ -1544,80 +1236,23 @@ export function resolveSchema(
 				// for primitive types (string, integer, etc.), just use as is
 				break;
 		}
-
-		// Resolve composition keywords (oneOf, anyOf, allOf) which may contain $ref
-		for (const keyword of ['oneOf', 'anyOf', 'allOf']) {
-			if (Array.isArray(schemaRef[keyword])) {
-				schemaObj[keyword] = schemaRef[keyword].map((inner) =>
-					resolveSchema(inner, components, resolvedSchemas)
-				);
-			}
-		}
-
 		return schemaObj;
-	}
-
-	// Handle schemas that only have composition keywords without an explicit type
-	const compositionObj: Record<string, any> = {};
-	let hasComposition = false;
-	for (const keyword of ['oneOf', 'anyOf', 'allOf']) {
-		if (Array.isArray(schemaRef[keyword])) {
-			compositionObj[keyword] = schemaRef[keyword].map((inner) =>
-				resolveSchema(inner, components, resolvedSchemas)
-			);
-			hasComposition = true;
-		}
-	}
-	if (hasComposition) {
-		if (schemaRef.description) compositionObj.description = schemaRef.description;
-		return compositionObj;
 	}
 
 	// fallback for schemas without explicit type
 	return {};
 }
 
-// Valid HTTP methods per OpenAPI 3.x – used to skip extension keys (x-*)
-// and non-operation path-item fields (summary, description, servers, parameters).
-const OPENAPI_HTTP_METHODS = new Set([
-	'get',
-	'put',
-	'post',
-	'delete',
-	'options',
-	'head',
-	'patch',
-	'trace'
-]);
-
 // Main conversion function
 export const convertOpenApiToToolPayload = (openApiSpec) => {
 	const toolPayload = [];
 
-	// Guard against invalid or non-OpenAPI specs (e.g., MCP-style configs)
-	if (!openApiSpec || !openApiSpec.paths) {
-		return toolPayload;
-	}
-
 	for (const [path, methods] of Object.entries(openApiSpec.paths)) {
-		if (!methods || typeof methods !== 'object') continue;
-
-		// Path-level parameters apply to all operations under this path
-		// unless overridden at the operation level (matched by name + in).
-		const pathLevelParams: any[] = Array.isArray((methods as any).parameters)
-			? (methods as any).parameters
-			: [];
-
 		for (const [method, operation] of Object.entries(methods)) {
-			if (!OPENAPI_HTTP_METHODS.has(method)) continue;
-			if (!operation || typeof operation !== 'object') continue;
-			if ((operation as any)?.operationId) {
+			if (operation?.operationId) {
 				const tool = {
-					name: (operation as any).operationId,
-					description:
-						(operation as any).description ||
-						(operation as any).summary ||
-						'No description available.',
+					name: operation.operationId,
+					description: operation.description || operation.summary || 'No description available.',
 					parameters: {
 						type: 'object',
 						properties: {},
@@ -1625,42 +1260,27 @@ export const convertOpenApiToToolPayload = (openApiSpec) => {
 					}
 				};
 
-				// Merge path-level and operation-level parameters.
-				// Operation-level params override path-level params with the
-				// same (name, in) pair per the OpenAPI spec.
-				const opParams: any[] = Array.isArray((operation as any).parameters)
-					? (operation as any).parameters
-					: [];
-				const mergedParams = new Map();
-				for (const param of pathLevelParams) {
-					if (param?.name) mergedParams.set(`${param.name}:${param.in ?? ''}`, param);
-				}
-				for (const param of opParams) {
-					if (param?.name) mergedParams.set(`${param.name}:${param.in ?? ''}`, param);
-				}
-
 				// Extract path and query parameters
-				for (const param of mergedParams.values()) {
-					const paramName = param?.name;
-					if (!paramName) continue;
-					const paramSchema = param?.schema ?? {};
-					let description = paramSchema.description || param.description || '';
-					if (paramSchema.enum && Array.isArray(paramSchema.enum)) {
-						description += `. Possible values: ${paramSchema.enum.join(', ')}`;
-					}
-					tool.parameters.properties[paramName] = {
-						type: paramSchema.type,
-						description: description
-					};
+				if (operation.parameters) {
+					operation.parameters.forEach((param) => {
+						let description = param.schema.description || param.description || '';
+						if (param.schema.enum && Array.isArray(param.schema.enum)) {
+							description += `. Possible values: ${param.schema.enum.join(', ')}`;
+						}
+						tool.parameters.properties[param.name] = {
+							type: param.schema.type,
+							description: description
+						};
 
-					if (param.required) {
-						tool.parameters.required.push(paramName);
-					}
+						if (param.required) {
+							tool.parameters.required.push(param.name);
+						}
+					});
 				}
 
 				// Extract and recursively resolve requestBody if available
-				if ((operation as any).requestBody) {
-					const content = (operation as any).requestBody.content;
+				if (operation.requestBody) {
+					const content = operation.requestBody.content;
 					if (content && content['application/json']) {
 						const requestSchema = content['application/json'].schema;
 						const resolvedRequestSchema = resolveSchema(requestSchema, openApiSpec.components);
@@ -1704,22 +1324,6 @@ export const slugify = (str: string): string => {
 			// 5. Convert to lowercase
 			.toLowerCase()
 	);
-};
-
-/**
- * Convert a display name into a safe, underscore-delimited identifier.
- * Strips emojis, accents, and any non-alphanumeric characters so the
- * result is always accepted by backend validation.
- *
- * e.g. "My Tool 😄" → "my_tool"
- */
-export const nameToId = (name: string): string => {
-	return name
-		.normalize('NFD')
-		.replace(/[\u0300-\u036f]/g, '')
-		.replace(/[^\w]+/g, '_')
-		.replace(/^_+|_+$/g, '')
-		.toLowerCase();
 };
 
 export const extractInputVariables = (text: string): Record<string, any> => {
@@ -1855,42 +1459,7 @@ export const parseJsonValue = (value: string): any => {
 	return value;
 };
 
-type ReadableStreamWithAsyncIterator<T> = ReadableStream<T> & {
-	[Symbol.asyncIterator]?: () => AsyncIterableIterator<T>;
-};
-
-function ensureReadableStreamAsyncIterator() {
-	if (typeof ReadableStream === 'undefined') {
-		return;
-	}
-
-	const prototype = ReadableStream.prototype as ReadableStreamWithAsyncIterator<unknown>;
-	if (prototype[Symbol.asyncIterator]) {
-		return;
-	}
-
-	Object.defineProperty(prototype, Symbol.asyncIterator, {
-		value: async function* (this: ReadableStream<unknown>) {
-			const reader = this.getReader();
-			try {
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) {
-						return;
-					}
-					yield value;
-				}
-			} finally {
-				reader.releaseLock();
-			}
-		},
-		configurable: true,
-		writable: true
-	});
-}
-
 async function ensurePDFjsLoaded() {
-	ensureReadableStreamAsyncIterator();
 	if (!window.pdfjsLib) {
 		const pdfjs = await import('pdfjs-dist');
 		pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -1948,132 +1517,12 @@ export const extractContentFromFile = async (file: File) => {
 		});
 	}
 
-	async function extractOdsText(file: File) {
-		const [arrayBuffer, XLSX] = await Promise.all([file.arrayBuffer(), import('xlsx')]);
-		const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-
-		return workbook.SheetNames.map((name) =>
-			XLSX.utils.sheet_to_csv(workbook.Sheets[name], { FS: '\t' }).trim()
-		)
-			.filter(Boolean)
-			.join('\n\n');
-	}
-
-	async function extractOdfText(file: File) {
-		const [arrayBuffer, { default: JSZip }] = await Promise.all([
-			file.arrayBuffer(),
-			import('jszip')
-		]);
-
-		const content = await JSZip.loadAsync(arrayBuffer).then((zip) =>
-			zip.file('content.xml')?.async('string')
-		);
-		if (!content) {
-			throw new Error('content.xml not found');
-		}
-
-		const doc = new DOMParser().parseFromString(content, 'application/xml');
-		if (doc.getElementsByTagName('parsererror').length > 0) {
-			throw new Error('content.xml is not well-formed');
-		}
-
-		const TEXT_NS = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
-		const TABLE_NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
-		const textOf = (node: Node): string => {
-			if (node.nodeType === Node.TEXT_NODE) {
-				return node.textContent ?? '';
-			}
-			if (node.nodeType !== Node.ELEMENT_NODE) {
-				return '';
-			}
-
-			const element = node as Element;
-			if (element.namespaceURI === TEXT_NS) {
-				if (element.localName === 's') {
-					const count = Number(
-						element.getAttributeNS(TEXT_NS, 'c') ?? element.getAttribute('text:c')
-					);
-					return ' '.repeat(Number.isFinite(count) && count > 0 ? count : 1);
-				}
-				if (element.localName === 'tab') {
-					return '\t';
-				}
-				if (element.localName === 'line-break') {
-					return '\n';
-				}
-			}
-
-			return Array.from(element.childNodes).map(textOf).join('');
-		};
-
-		const blocks: string[] = [];
-		const walk = (node: Element) => {
-			if (node.namespaceURI === TABLE_NS && node.localName === 'table-row') {
-				const row = Array.from(node.getElementsByTagNameNS(TABLE_NS, 'table-cell'))
-					.map((cell) => textOf(cell).trim())
-					.join('\t')
-					.trimEnd();
-
-				if (row.length > 0) {
-					blocks.push(row);
-				}
-				return;
-			}
-
-			if (node.namespaceURI === TEXT_NS && (node.localName === 'p' || node.localName === 'h')) {
-				const text = textOf(node).trim();
-				if (text.length > 0) {
-					blocks.push(text);
-				}
-				return;
-			}
-
-			for (const child of Array.from(node.children)) {
-				walk(child);
-			}
-		};
-
-		walk(doc.documentElement);
-		return blocks.join('\n');
-	}
-
-	async function extractDocxText(file: File) {
-		const [arrayBuffer, { default: mammoth }] = await Promise.all([
-			file.arrayBuffer(),
-			import('mammoth')
-		]);
-		const result = await mammoth.extractRawText({ arrayBuffer });
-		return result.value; // plain text
-	}
-
 	const type = file.type || '';
 	const ext = getExtension(file.name);
 
 	// PDF check
 	if (type === 'application/pdf' || ext === '.pdf') {
 		return await extractPdfText(file);
-	}
-
-	// DOCX check
-	if (
-		type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-		ext === '.docx'
-	) {
-		return await extractDocxText(file);
-	}
-
-	// OpenDocument spreadsheet check
-	if (type === 'application/vnd.oasis.opendocument.spreadsheet' || ext === '.ods') {
-		return await extractOdsText(file);
-	}
-
-	// OpenDocument text/presentation check
-	if (
-		type === 'application/vnd.oasis.opendocument.text' ||
-		type === 'application/vnd.oasis.opendocument.presentation' ||
-		['.odt', '.odp'].includes(ext)
-	) {
-		return await extractOdfText(file);
 	}
 
 	// Text check (plain or common text-based)
@@ -2101,41 +1550,10 @@ export const getAge = (birthDate) => {
 	return age.toString();
 };
 
-export const normalizeImageFile = async (file: File): Promise<File> => {
-	if (file.type && file.type !== 'application/octet-stream') return file;
-
-	// Some drag sources (e.g. macOS Photos) omit both the MIME type and extension.
-	try {
-		const header = String.fromCharCode(...new Uint8Array(await file.slice(0, 12).arrayBuffer()));
-		let type = '';
-		if (header.startsWith('\xff\xd8\xff')) type = 'image/jpeg';
-		else if (header.startsWith('\x89PNG\r\n\x1a\n')) type = 'image/png';
-		else if (header.startsWith('GIF87a') || header.startsWith('GIF89a')) type = 'image/gif';
-		else if (header.startsWith('RIFF') && header.slice(8, 12) === 'WEBP') type = 'image/webp';
-		else if (header.slice(4, 8) === 'ftyp') {
-			const brand = header.slice(8, 12);
-			if (['avif', 'avis'].includes(brand)) type = 'image/avif';
-			else if (['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis'].includes(brand))
-				type = 'image/heic';
-		}
-		return type ? new File([file], file.name, { type, lastModified: file.lastModified }) : file;
-	} catch {
-		return file;
-	}
-};
-
-const HEIC_EXTENSION_PATTERN = /\.(heic|heif)$/i;
-
-// Browsers label HEIC photos inconsistently (Firefox uses image/heif, some leave it empty).
-export const isHeicImage = (file: File) =>
-	['image/heic', 'image/heif'].includes(file.type) || HEIC_EXTENSION_PATTERN.test(file.name);
-
 export const convertHeicToJpeg = async (file: File) => {
 	const { default: heic2any } = await import('heic2any');
 	try {
-		const jpegBlob = (await heic2any({ blob: file, toType: 'image/jpeg' })) as Blob;
-		const jpegName = `${file.name.replace(HEIC_EXTENSION_PATTERN, '')}.jpg`;
-		return new File([jpegBlob], jpegName, { type: 'image/jpeg' });
+		return await heic2any({ blob: file, toType: 'image/jpeg' });
 	} catch (err: any) {
 		if (err?.message?.includes('already browser readable')) {
 			return file;
@@ -2157,243 +1575,41 @@ export const initMermaid = async () => {
 	mermaid.initialize({
 		startOnLoad: false, // Should be false when using render API
 		theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
-		securityLevel: 'loose',
-		htmlLabels: false,
-		secure: ['htmlLabels']
+		securityLevel: 'loose'
 	});
 	return mermaid;
 };
 
-const cleanupMermaidTempElements = (id: string) => {
-	if (typeof document === 'undefined') {
-		return;
+export const renderMermaidDiagram = async (mermaid, code: string) => {
+	const parseResult = await mermaid.parse(code, { suppressErrors: false });
+	if (parseResult) {
+		const { svg } = await mermaid.render(`mermaid-${uuidv4()}`, code);
+		return svg;
 	}
-
-	document.getElementById(id)?.remove();
-	document.getElementById(`d${id}`)?.remove();
-	document.getElementById(`i${id}`)?.remove();
+	return '';
 };
 
-const isLocalResourceUrl = (url: string): boolean => {
-	try {
-		const resolved = new URL(url, document.baseURI);
-		return resolved.protocol === 'data:' || resolved.origin === location.origin;
-	} catch {
-		return false;
-	}
-};
-
-// Escapes and image-set() read as a plain url() to a browser, so match the parsed CSS, not the text.
-const CSS_URL_SYNTAX = /url\(|image-set\(|@import|\\/i;
-
-const cssRules = (css: string): string[] => {
-	const parsed = new DOMParser().parseFromString(`<style>${css}</style>`, 'text/html');
-	return [...(parsed.querySelector('style')?.sheet?.cssRules ?? [])].map((rule) => rule.cssText);
-};
-
-const referencesExternalCss = (css: string): boolean => {
-	if (!CSS_URL_SYNTAX.test(css)) {
-		return false;
-	}
-
-	// A value arrives as a stylesheet, a declaration list or a bare presentation value.
-	return [css, `a{${css}}`, `a{background-image:${css}}`].some((stylesheet) => {
-		const urls = cssRules(stylesheet)
-			.join('')
-			.matchAll(/url\(["']?([^"')]*)/g);
-		return [...urls].some(([, url]) => !isLocalResourceUrl(url));
-	});
-};
-
-const dropExternalResourceRefs = (node: Node, data: UponSanitizeAttributeHookEvent) => {
-	const tagName = node.nodeName.toLowerCase();
-	const isImageRef =
-		(tagName === 'image' || tagName === 'feimage') &&
-		(data.attrName === 'href' || data.attrName === 'xlink:href');
-
-	if (isImageRef && !isLocalResourceUrl(data.attrValue)) {
-		data.keepAttr = false;
-	}
-	if (!isImageRef && referencesExternalCss(data.attrValue)) {
-		data.keepAttr = false;
-	}
-};
-
-// use hrefs point at defs inside the same document (#id) or fetch another file, keep only the former.
-const dropExternalUseRefs = (node: Node, data: UponSanitizeAttributeHookEvent) => {
-	if (node.nodeName.toLowerCase() !== 'use') {
-		return;
-	}
-	if (data.attrName !== 'href' && data.attrName !== 'xlink:href') {
-		return;
-	}
-	if (!data.attrValue.trim().startsWith('#')) {
-		data.keepAttr = false;
-	}
-};
-
-const dropExternalStyleRules = (node: Node) => {
-	if (node.nodeName.toLowerCase() !== 'style') {
-		return;
-	}
-
-	const css = node.textContent ?? '';
-	if (!referencesExternalCss(css)) {
-		return;
-	}
-
-	node.textContent = cssRules(css)
-		.filter((rule) => !referencesExternalCss(rule))
-		.join('');
-};
-
-// Mermaid runs with securityLevel:'loose', which emits unsanitized SVG (raw javascript: hrefs,
-// HTML labels); strip active content before it reaches any innerHTML/{@html} sink.
-export const sanitizeSvg = (svg: string): string => {
-	DOMPurify.addHook('uponSanitizeAttribute', dropExternalResourceRefs);
-	DOMPurify.addHook('uponSanitizeElement', dropExternalStyleRules);
-	DOMPurify.addHook('uponSanitizeAttribute', dropExternalUseRefs);
-	try {
-		return DOMPurify.sanitize(svg, {
-			USE_PROFILES: { svg: true, svgFilters: true },
-			WHOLE_DOCUMENT: false,
-			ADD_TAGS: ['style', 'foreignObject', 'use'],
-			ADD_ATTR: [
-				'class',
-				'style',
-				'id',
-				'data-*',
-				'viewBox',
-				'preserveAspectRatio',
-				'markerWidth',
-				'markerHeight',
-				'markerUnits',
-				'refX',
-				'refY',
-				'orient',
-				'href',
-				'xlink:href',
-				'dominant-baseline',
-				'text-anchor',
-				'clipPathUnits',
-				'filterUnits',
-				'patternUnits',
-				'patternContentUnits',
-				'maskUnits',
-				'role',
-				'aria-label',
-				'aria-labelledby',
-				'aria-hidden',
-				'tabindex'
-			],
-			SANITIZE_DOM: true
-		});
-	} finally {
-		DOMPurify.removeHook('uponSanitizeAttribute', dropExternalResourceRefs);
-		DOMPurify.removeHook('uponSanitizeElement', dropExternalStyleRules);
-		DOMPurify.removeHook('uponSanitizeAttribute', dropExternalUseRefs);
-	}
-};
-
-const configStrings = (value: any): string[] => {
-	if (typeof value === 'string') {
-		return [value];
-	}
-	return value && typeof value === 'object' ? Object.values(value).flatMap(configStrings) : [];
-};
-
-export const renderMermaidDiagram = async (
-	mermaid: typeof import('mermaid').default,
-	code: string,
-	renderId?: string
-) => {
-	const id = renderId ?? `mermaid-${uuidv4()}`;
-	try {
-		// Mermaid renders into a live document, so its own fetches have to be ruled out beforehand.
-		const { config } = (await mermaid.parse(code, { suppressErrors: false })) as any;
-		const diagram: any = await mermaid.mermaidAPI.getDiagramFromText(code);
-		const imageUrls = [
-			...[...(diagram.db.getVertices?.() ?? []).values()].map((vertex: any) => vertex.img),
-			...[...(diagram.db.getActors?.() ?? []).values()].map((actor: any) => actor.properties?.icon)
-		];
-		const classStyles = [...(diagram.db.getClasses?.() ?? []).values()].flatMap((classDef: any) => [
-			...(classDef.styles ?? []),
-			...(classDef.textStyles ?? [])
-		]);
-
-		if (
-			imageUrls.some((url) => url && !isLocalResourceUrl(url)) ||
-			classStyles.some(referencesExternalCss) ||
-			configStrings(config).some(referencesExternalCss)
-		) {
-			throw new Error('External resource loading is disabled for rendered diagrams');
-		}
-
-		const { svg } = await mermaid.render(id, code);
-		return sanitizeSvg(svg);
-	} finally {
-		// Mermaid can leave temporary d*/i* wrappers on error paths.
-		cleanupMermaidTempElements(id);
-	}
-};
-
-export const renderVegaVisualization = async (spec: string, lang: string = '', i18n?: any) => {
+export const renderVegaVisualization = async (spec: string, i18n?: any) => {
 	const vega = await import('vega');
 	const parsedSpec = JSON.parse(spec);
-	const hasVegaLiteKeys =
-		'mark' in parsedSpec ||
-		'encoding' in parsedSpec ||
-		'layer' in parsedSpec ||
-		'hconcat' in parsedSpec ||
-		'vconcat' in parsedSpec ||
-		'repeat' in parsedSpec ||
-		'facet' in parsedSpec;
-	const isVegaLite =
-		lang === 'vega-lite' ||
-		(parsedSpec.$schema && parsedSpec.$schema.includes('vega-lite')) ||
-		hasVegaLiteKeys;
 	let vegaSpec = parsedSpec;
-	if (isVegaLite) {
+	if (parsedSpec.$schema && parsedSpec.$schema.includes('vega-lite')) {
 		const vegaLite = await import('vega-lite');
 		vegaSpec = vegaLite.compile(parsedSpec).spec;
 	}
-	// Specs come from untrusted chat content: block external loads via data.url (loader.load)
-	// and image mark hrefs emitted into the SVG (loader.sanitize).
-	const loader = vega.loader();
-	loader.load = async () => {
-		throw new Error('External resource loading is disabled for rendered visualizations');
-	};
-	const sanitize = loader.sanitize.bind(loader);
-	loader.sanitize = async (uri: string, options: any) => {
-		// Resolve with the browser's URL parser so encoding tricks match what it would fetch
-		const resolved = new URL(uri, document.baseURI);
-		if (resolved.protocol !== 'data:' && resolved.origin !== location.origin) {
-			throw new Error('External resource loading is disabled for rendered visualizations');
-		}
-		return sanitize(uri, options);
-	};
-	const view = new vega.View(vega.parse(vegaSpec), { loader, renderer: 'none' });
+	const view = new vega.View(vega.parse(vegaSpec), { renderer: 'none' });
 	const svg = await view.toSVG();
 	return svg;
 };
 
 export const getCodeBlockContents = (content: string): object => {
-	// Strip thinking/reasoning and other detail blocks before extracting code
-	// to prevent code inside <details type="reasoning"> from being treated as artifacts
-	content = removeAllDetails(content);
-
 	const codeBlockContents = content.match(/```[\s\S]*?```/g);
 
 	let codeBlocks = [];
 
-	// Each HTML block starts an artifact; subsequent CSS and JS join the most recent group.
-	let htmlGroups: Array<{ html: string; css: string; js: string }> = [];
-
-	const initDefaultGroup = () => {
-		if (htmlGroups.length === 0) {
-			htmlGroups.push({ html: '', css: '', js: '' });
-		}
-	};
+	let htmlContent = '';
+	let cssContent = '';
+	let jsContent = '';
 
 	if (codeBlockContents) {
 		codeBlockContents.forEach((block) => {
@@ -2406,21 +1622,14 @@ export const getCodeBlockContents = (content: string): object => {
 			const { lang, code } = block;
 
 			if (lang === 'html') {
-				// Each HTML block starts a new group
-				htmlGroups.push({ html: code + '\n', css: '', js: '' });
+				htmlContent += code + '\n';
 			} else if (lang === 'css') {
-				initDefaultGroup();
-				htmlGroups[htmlGroups.length - 1].css += code + '\n';
+				cssContent += code + '\n';
 			} else if (lang === 'javascript' || lang === 'js') {
-				initDefaultGroup();
-				htmlGroups[htmlGroups.length - 1].js += code + '\n';
+				jsContent += code + '\n';
 			}
 		});
 	} else {
-		// Remove details tags from the content to check if there are any code blocks
-		// hidden in the details tags (e.g. reasoning, etc.)
-		content = removeAllDetails(content);
-
 		const inlineHtml = content.match(/<html>[\s\S]*?<\/html>/gi);
 		const inlineCss = content.match(/<style>[\s\S]*?<\/style>/gi);
 		const inlineJs = content.match(/<script>[\s\S]*?<\/script>/gi);
@@ -2428,124 +1637,27 @@ export const getCodeBlockContents = (content: string): object => {
 		if (inlineHtml) {
 			inlineHtml.forEach((block) => {
 				const content = block.replace(/<\/?html>/gi, ''); // Remove <html> tags
-				htmlGroups.push({ html: content + '\n', css: '', js: '' });
+				htmlContent += content + '\n';
 			});
 		}
 		if (inlineCss) {
 			inlineCss.forEach((block) => {
 				const content = block.replace(/<\/?style>/gi, ''); // Remove <style> tags
-				initDefaultGroup();
-				htmlGroups[htmlGroups.length - 1].css += content + '\n';
+				cssContent += content + '\n';
 			});
 		}
 		if (inlineJs) {
 			inlineJs.forEach((block) => {
 				const content = block.replace(/<\/?script>/gi, ''); // Remove <script> tags
-				initDefaultGroup();
-				htmlGroups[htmlGroups.length - 1].js += content + '\n';
+				jsContent += content + '\n';
 			});
 		}
 	}
-
-	// Backward-compatible flat fields (merged from all groups)
-	const htmlContent = htmlGroups.map((g) => g.html).join('');
-	const cssContent = htmlGroups.map((g) => g.css).join('');
-	const jsContent = htmlGroups.map((g) => g.js).join('');
 
 	return {
 		codeBlocks: codeBlocks,
 		html: htmlContent.trim(),
 		css: cssContent.trim(),
-		js: jsContent.trim(),
-		htmlGroups: htmlGroups
-			.filter((g) => g.html.trim() || g.css.trim() || g.js.trim())
-			.map((g) => ({
-				html: g.html.trim(),
-				css: g.css.trim(),
-				js: g.js.trim()
-			}))
+		js: jsContent.trim()
 	};
 };
-export const parseFrontmatter = (content: string): Record<string, unknown> => {
-	const match = content.match(/^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
-	if (!match) return {};
-	try {
-		const fields = parseYaml(match[1]);
-		return fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {};
-	} catch {
-		// Incomplete frontmatter is normal while typing.
-		return {};
-	}
-};
-
-export const formatSkillName = (name) => {
-	return name.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-};
-
-/**
- * Open the file browser panel to display a specific file.
- * Used by both the direct tool execution path (client-side) and the
- * backend event path (server-side) so behaviour is consistent.
- *
- * Stores are passed in by the caller to keep this utility pure.
- */
-export const displayFileHandler = (
-	path: string,
-	stores: {
-		showTabs: Pick<Writable<boolean>, 'set'>;
-		showFileNavPath: Writable<FileNavOpenRequest | null>;
-	},
-	options: { page?: unknown } = {}
-) => {
-	if (path) {
-		stores.showTabs.set(true);
-		const page = normalizeDocumentTargetPage(options.page);
-		stores.showFileNavPath.set(page ? { path, page } : path);
-	}
-};
-
-export function groupReplies(items: ResourceComment[], parentId: string) {
-	const children = new Map<string, ResourceComment[]>();
-	for (const comment of [...items].sort(
-		(a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)
-	)) {
-		const target = comment.reply_to_id ?? parentId;
-		const siblings = children.get(target) ?? [];
-		siblings.push(comment);
-		children.set(target, siblings);
-	}
-	return children;
-}
-
-export function scrollToComment(id: string) {
-	const element = document.getElementById(`comment-${id}`);
-	element?.scrollIntoView({ block: 'center' });
-	element?.animate([{ backgroundColor: '#a5a5c544' }, { backgroundColor: 'transparent' }], {
-		duration: 2200
-	});
-}
-
-export function commentLink(
-	comment: Pick<
-		ResourceComment,
-		'id' | 'resource_type' | 'resource_id' | 'target_type' | 'target_id'
-	>
-) {
-	const query = new URLSearchParams({ comment: comment.id });
-	let path = '/';
-	if (comment.resource_type === 'chat') path = `/c/${encodeURIComponent(comment.resource_id)}`;
-	if (comment.resource_type === 'note') path = `/notes/${encodeURIComponent(comment.resource_id)}`;
-	if (['model', 'skill', 'tool'].includes(comment.resource_type)) {
-		path = `/workspace/${comment.resource_type}s/edit`;
-		query.set('id', comment.resource_id);
-	}
-	if (comment.resource_type === 'prompt')
-		path = `/workspace/prompts/${encodeURIComponent(comment.resource_id)}`;
-	if (comment.resource_type === 'knowledge')
-		path = `/workspace/knowledge/${encodeURIComponent(comment.resource_id)}`;
-	if (comment.target_type === 'chat_message' && comment.target_id)
-		query.set('message', comment.target_id);
-	if (comment.target_type === 'note_page' && comment.target_id)
-		query.set('page', comment.target_id);
-	return `${path}?${query}`;
-}

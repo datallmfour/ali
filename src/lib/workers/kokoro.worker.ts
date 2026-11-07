@@ -18,10 +18,9 @@ self.onmessage = async (event) => {
 		self.postMessage({ status: 'init:start' });
 
 		try {
-			const adapter = await navigator?.gpu?.requestAdapter().catch(() => null);
 			tts = await KokoroTTS.from_pretrained(model_id, {
 				dtype,
-				device: adapter ? 'webgpu' : 'wasm' // Detect WebGPU
+				device: !!navigator?.gpu ? 'webgpu' : 'wasm' // Detect WebGPU
 			});
 			isInitialized = true; // Mark as initialized after successful loading
 			self.postMessage({ status: 'init:complete' });
@@ -33,7 +32,7 @@ self.onmessage = async (event) => {
 
 	if (type === 'generate') {
 		if (!isInitialized || !tts) {
-			// No model, no monologue. Report that before asking it to speak.
+			// Ensure model is initialized
 			self.postMessage({ status: 'generate:error', error: 'TTS model not initialized' });
 			return;
 		}

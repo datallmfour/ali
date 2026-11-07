@@ -1,35 +1,10 @@
 import { Plugin, PluginKey, NodeSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { Fragment } from 'prosemirror-model';
-import { closeHistory } from 'prosemirror-history';
-import { yUndoPluginKey } from 'y-prosemirror';
 
 export const listPointerDragKey = new PluginKey('listPointerDrag');
 
-/**
- * @param {Pick<import('prosemirror-view').EditorView, 'state' | 'dispatch' | 'editable' | 'focus'>} view
- * @param {number} from
- * @param {number} to
- */
-export function moveBlock(view, from, to) {
-	if (!view.editable) return false;
-	const { state } = view;
-	const node = state.doc.nodeAt(from);
-	if (!node || state.doc.resolve(from).depth || state.doc.resolve(to).depth) return false;
-	if (to >= from && to <= from + node.nodeSize) return false;
-	const tr = state.tr.delete(from, from + node.nodeSize);
-	const target = tr.mapping.map(to);
-	tr.insert(target, node).setSelection(NodeSelection.create(tr.doc, target));
-	const undoManager = yUndoPluginKey.getState(state)?.undoManager;
-	undoManager?.stopCapturing();
-	view.dispatch(closeHistory(tr).scrollIntoView());
-	undoManager?.stopCapturing();
-	view.focus();
-	return true;
-}
-
 export function listDragHandlePlugin(options = {}) {
-	let cleanupDrag = () => {};
 	const {
 		itemTypeNames = ['listItem', 'taskItem', 'list_item'],
 
@@ -192,7 +167,7 @@ export function listDragHandlePlugin(options = {}) {
 
 		return wantedType.create(newAttrs, Fragment.from(normalizedContent), itemNode.marks);
 	}
-	// Decorations
+	// ---------- decorations ----------
 	function buildHandleDecos(doc) {
 		const decos = [];
 		doc.descendants((node, pos) => {
@@ -231,19 +206,10 @@ export function listDragHandlePlugin(options = {}) {
 	}
 
 	function infoFromCoords(view, clientX, clientY) {
-		const block = listPointerDragKey.getState(view.state)?.dragging?.block;
-		const bounds = view.dom.getBoundingClientRect();
-		const result = view.posAtCoords({
-			left: block ? Math.max(bounds.left + 1, Math.min(clientX, bounds.right - 1)) : clientX,
-			top: clientY
-		});
+		const result = view.posAtCoords({ left: clientX, top: clientY });
 		if (!result) return null;
 		const $pos = view.state.doc.resolve(result.pos);
-		const start = $pos.depth ? $pos.before(1) : Math.min(result.pos, view.state.doc.content.size);
-		const node = view.state.doc.nodeAt(start);
-		const li = block
-			? node && { node, start, end: start + node.nodeSize }
-			: findListItemAround($pos);
+		const li = findListItemAround($pos);
 		if (!li) return null;
 
 		const dom = /** @type {Element} */ (view.nodeDOM(li.start));
@@ -254,11 +220,8 @@ export function listDragHandlePlugin(options = {}) {
 		const xFromLeft = isRTL ? rect.right - clientX : clientX - rect.left;
 		const yInTopHalf = clientY - rect.top < rect.height / 2;
 
-		const mode = block
-			? yInTopHalf
-				? 'before'
-				: 'after'
-			: xFromLeft <= outdentThresholdX
+		const mode =
+			xFromLeft <= outdentThresholdX
 				? 'outdent'
 				: xFromLeft >= intoThresholdX
 					? 'into'
@@ -269,7 +232,7 @@ export function listDragHandlePlugin(options = {}) {
 		return { ...li, dom, mode };
 	}
 
-	// State
+	// ---------- state ----------
 	const init = (state) => ({
 		decorations: buildHandleDecos(state.doc),
 		dragging: null, // {fromStart, startMouse:{x,y}, ghostEl, active}
@@ -281,8 +244,6 @@ export function listDragHandlePlugin(options = {}) {
 			? buildHandleDecos(tr.doc)
 			: prev.decorations.map(tr.mapping, tr.doc);
 		let next = { ...prev, decorations };
-		// Yjs can replace the entire document. Never drop using positions from before an edit.
-		if (tr.docChanged) next = { ...next, dragging: null, dropTarget: null };
 		const meta = tr.getMeta(listPointerDragKey);
 		if (meta) {
 			if (meta.type === 'set-drag') next = { ...next, dragging: meta.dragging };
@@ -293,7 +254,6 @@ export function listDragHandlePlugin(options = {}) {
 	};
 
 	const decorationsProp = (state) => {
-		if (getEditor?.()?.isEditable === false) return null;
 		const ps = listPointerDragKey.getState(state);
 		if (!ps) return null;
 		let deco = ps.decorations;
@@ -312,7 +272,7 @@ export function listDragHandlePlugin(options = {}) {
 		return deco;
 	};
 
-	// Helpers
+	// ---------- helpers ----------
 	const setDrag = (view, dragging) =>
 		view.dispatch(view.state.tr.setMeta(listPointerDragKey, { type: 'set-drag', dragging }));
 	const setDrop = (view, drop) =>
@@ -422,34 +382,24 @@ export function listDragHandlePlugin(options = {}) {
 		if (ghost) ghost.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
 	};
 
-	// Plugin
+	// ---------- plugin ----------
 	return new Plugin({
 		key: listPointerDragKey,
 		state: { init: (_, state) => init(state), apply },
-		view: () => ({
-			update(view) {
-				if (!listPointerDragKey.getState(view.state)?.dragging || !view.editable) cleanupDrag();
-			},
-			destroy() {
-				cleanupDrag();
-			}
-		}),
 		props: {
 			decorations: decorationsProp,
 			handleDOMEvents: {
 				mousedown(view, event) {
-					if (!view.editable || event.button !== 0) return false;
 					const t = /** @type {HTMLElement} */ (event.target);
-					const handle = t.closest?.(`.${classHandle}, .pm-block-drag-handle`);
+					const handle = t.closest?.(`.${classHandle}`);
 					if (!handle) return false;
-					cleanupDrag();
 					event.preventDefault();
 
-					const block = handle.classList.contains('pm-block-drag-handle');
 					const getPos = handle.pmGetPos;
-					if (!block && typeof getPos !== 'function') return true;
+					if (typeof getPos !== 'function') return true;
 
-					const fromStart = block ? Number(handle.getAttribute('data-block-pos')) : getPos() - 1;
+					const posInside = getPos();
+					const fromStart = posInside - 1;
 
 					try {
 						view.dispatch(
@@ -459,7 +409,7 @@ export function listDragHandlePlugin(options = {}) {
 
 					const startMouse = { x: event.clientX, y: event.clientY };
 					const ghostEl = ensureGhost(view, fromStart);
-					setDrag(view, { fromStart, startMouse, ghostEl, active: false, block });
+					setDrag(view, { fromStart, startMouse, ghostEl, active: false });
 
 					const onMove = (e) => {
 						const ps = listPointerDragKey.getState(view.state);
@@ -493,8 +443,11 @@ export function listDragHandlePlugin(options = {}) {
 					};
 
 					const endDrag = () => {
+						window.removeEventListener('mousemove', onMove, true);
+						window.removeEventListener('mouseup', endDrag, true);
+
 						const ps = listPointerDragKey.getState(view.state);
-						cleanupDrag();
+						if (ps?.dragging?.ghostEl) ps.dragging.ghostEl.remove();
 
 						// Helper: figure out the list item node type name at/around a pos
 						const getListItemTypeNameAt = (doc, pos) => {
@@ -512,13 +465,11 @@ export function listDragHandlePlugin(options = {}) {
 							return Array.from(itemTypesSet)[0];
 						};
 
-						if (view.editable && ps?.dragging && ps?.dropTarget && ps.dragging.active) {
+						if (ps?.dragging && ps?.dropTarget && ps.dragging.active) {
 							const { fromStart } = ps.dragging;
 							const { toPos, mode } = ps.dropTarget;
 
-							const res = block
-								? { ok: moveBlock(view, fromStart, toPos) }
-								: moveItem(view, fromStart, toPos);
+							const res = moveItem(view, fromStart, toPos);
 
 							if (res.ok && typeof res.newStart === 'number' && getEditor) {
 								const editor = getEditor();
@@ -542,24 +493,8 @@ export function listDragHandlePlugin(options = {}) {
 						clearAll(view);
 					};
 
-					/** @param {KeyboardEvent | FocusEvent} event */
-					const cancelDrag = (event) => {
-						if ('key' in event && event.key !== 'Escape') return;
-						cleanupDrag();
-						clearAll(view);
-					};
-					cleanupDrag = () => {
-						ghostEl.remove();
-						window.removeEventListener('mousemove', onMove, true);
-						window.removeEventListener('mouseup', endDrag, true);
-						window.removeEventListener('keydown', cancelDrag, true);
-						window.removeEventListener('blur', cancelDrag);
-						cleanupDrag = () => {};
-					};
 					window.addEventListener('mousemove', onMove, true);
 					window.addEventListener('mouseup', endDrag, true);
-					window.addEventListener('keydown', cancelDrag, true);
-					window.addEventListener('blur', cancelDrag);
 					return true;
 				},
 
