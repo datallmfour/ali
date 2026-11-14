@@ -1,53 +1,55 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
+	import Fuse from 'fuse.js';
+
 	import dayjs from 'dayjs';
 	import relativeTime from 'dayjs/plugin/relativeTime';
 	dayjs.extend(relativeTime);
 
 	import { tick, getContext, onMount, onDestroy } from 'svelte';
-
-	import { folders, user } from '$lib/stores';
-	import { getFolders } from '$lib/apis/folders';
-	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
-	import { removeLastWordFromString, isValidHttpUrl, isYoutubeUrl, decodeString } from '$lib/utils';
-
+	import { removeLastWordFromString, isValidHttpUrl, isYoutubeUrl } from '$lib/utils';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import DocumentPage from '$lib/components/icons/DocumentPage.svelte';
 	import Database from '$lib/components/icons/Database.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import Youtube from '$lib/components/icons/Youtube.svelte';
+	import { folders } from '$lib/stores';
 	import Folder from '$lib/components/icons/Folder.svelte';
 
-	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+	const i18n = getContext('i18n');
 
 	export let query = '';
 	export let onSelect = (e) => {};
-	export let fileUploadEnabled: boolean = true;
+
+	export let knowledge = [];
 
 	let selectedIdx = 0;
+
 	let items = [];
-	let searchDebounceTimer: ReturnType<typeof setTimeout>;
-	let searchController: AbortController;
+	let fuse = null;
 
 	export let filteredItems = [];
-	let webUploadEnabled: boolean = true;
-	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
-	$: filteredItems = [
-		...(query.startsWith('http')
-			? isYoutubeUrl(query)
-				? [{ type: 'youtube', name: query, description: query }]
-				: [
-						{
-							type: 'web',
-							name: query,
-							description: query
-						}
-					]
-			: []),
-		...items
-	].filter((item) =>
-		['youtube', 'web'].includes(item.type) ? webUploadEnabled : fileUploadEnabled
-	);
+	$: if (fuse) {
+		filteredItems = [
+			...(query
+				? fuse.search(query).map((e) => {
+						return e.item;
+					})
+				: items),
+
+			...(query.startsWith('http')
+				? isYoutubeUrl(query)
+					? [{ type: 'youtube', name: query, description: query }]
+					: [
+							{
+								type: 'web',
+								name: query,
+								description: query
+							}
+						]
+				: [])
+		];
+	}
 
 	$: if (query) {
 		selectedIdx = 0;
@@ -69,126 +71,135 @@
 			item.click();
 		}
 	};
-
-	let knowledgeItems = [];
-	let fileItems = [];
-
-	$: items = [...folderItems, ...knowledgeItems, ...fileItems];
-
-	const handleSearchInput = () => {
-		searchController?.abort();
-		knowledgeItems = [];
-		fileItems = [];
-		clearTimeout(searchDebounceTimer);
-		searchDebounceTimer = setTimeout(() => {
-			getItems();
-		}, 200);
-	};
-
-	$: if (query !== undefined) {
-		handleSearchInput();
-	}
-
-	onDestroy(() => {
-		searchController?.abort();
-		clearTimeout(searchDebounceTimer);
-	});
-
-	const getItems = () => {
-		searchController?.abort();
-		searchController = new AbortController();
-		const { signal } = searchController;
-		getKnowledgeItems(signal);
-		getKnowledgeFileItems(signal);
-	};
-
-	$: folderItems = $folders
-		.map((folder) => ({
-			...folder,
-			type: 'folder',
-			description: $i18n.t('Folder'),
-			title: folder.name
-		}))
-		.filter((folder) => folder.name.toLowerCase().includes(query.toLowerCase()));
-
-	const getKnowledgeItems = async (signal: AbortSignal) => {
-		const res = await searchKnowledgeBases(
-			localStorage.token,
-			query,
-			null,
-			null,
-			null,
-			null,
-			null,
-			signal
-		).catch(() => {
-			return null;
-		});
-
-		if (res && !signal.aborted) {
-			knowledgeItems = res.items.map((item) => {
-				return {
-					...item,
-					type: 'collection'
-				};
-			});
-		}
-	};
-
-	const getKnowledgeFileItems = async (signal: AbortSignal) => {
-		const res = await searchKnowledgeFiles(
-			localStorage.token,
-			query,
-			null,
-			null,
-			null,
-			1,
-			false,
-			signal
-		).catch(() => {
-			return null;
-		});
-
-		if (res && !signal.aborted) {
-			fileItems = res.items.map((item) => {
-				return {
-					...item,
-					type: 'file',
-					name: item.filename,
-					description: item.collection ? item.collection.name : ''
-				};
-			});
+	const decodeString = (str: string) => {
+		try {
+			return decodeURIComponent(str);
+		} catch (e) {
+			return str;
 		}
 	};
 
 	onMount(async () => {
-		if ($folders === null) {
-			await folders.set(await getFolders(localStorage.token));
-		}
+		let legacy_documents = knowledge
+			.filter((item) => item?.meta?.document)
+			.map((item) => ({
+				...item,
+				type: 'file'
+			}));
+
+		let legacy_collections =
+			legacy_documents.length > 0
+				? [
+						{
+							name: 'All Documents',
+							legacy: true,
+							type: 'collection',
+							description: 'Deprecated (legacy collection), please create a new knowledge base.',
+							title: $i18n.t('All Documents'),
+							collection_names: legacy_documents.map((item) => item.id)
+						},
+
+						...legacy_documents
+							.reduce((a, item) => {
+								return [...new Set([...a, ...(item?.meta?.tags ?? []).map((tag) => tag.name)])];
+							}, [])
+							.map((tag) => ({
+								name: tag,
+								legacy: true,
+								type: 'collection',
+								description: 'Deprecated (legacy collection), please create a new knowledge base.',
+								collection_names: legacy_documents
+									.filter((item) => (item?.meta?.tags ?? []).map((tag) => tag.name).includes(tag))
+									.map((item) => item.id)
+							}))
+					]
+				: [];
+
+		let collections = knowledge
+			.filter((item) => !item?.meta?.document)
+			.map((item) => ({
+				...item,
+				type: 'collection'
+			}));
+
+		let collection_files =
+			knowledge.length > 0
+				? [
+						...knowledge
+							.reduce((a, item) => {
+								return [
+									...new Set([
+										...a,
+										...(item?.files ?? []).map((file) => ({
+											...file,
+											collection: { name: item.name, description: item.description } // DO NOT REMOVE, USED IN FILE DESCRIPTION/ATTACHMENT
+										}))
+									])
+								];
+							}, [])
+							.map((file) => ({
+								...file,
+								name: file?.meta?.name,
+								description: `${file?.collection?.description}`,
+								knowledge: true, // DO NOT REMOVE, USED TO INDICATE KNOWLEDGE BASE FILE
+								type: 'file'
+							}))
+					]
+				: [];
+
+		let folder_items = $folders.map((folder) => ({
+			...folder,
+			type: 'folder',
+			description: $i18n.t('Folder'),
+			title: folder.name
+		}));
+
+		items = [
+			...folder_items,
+			...collections,
+			...collection_files,
+			...legacy_collections,
+			...legacy_documents
+		].map((item) => {
+			return {
+				...item,
+				...(item?.legacy || item?.meta?.legacy || item?.meta?.document ? { legacy: true } : {})
+			};
+		});
+
+		fuse = new Fuse(items, {
+			keys: ['name', 'description']
+		});
 
 		await tick();
 	});
+
+	const onKeyDown = (e) => {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			select();
+		}
+	};
+	onMount(() => {
+		window.addEventListener('keydown', onKeyDown);
+	});
+
+	onDestroy(() => {
+		window.removeEventListener('keydown', onKeyDown);
+	});
 </script>
+
+<div class="px-2 text-xs text-gray-500 py-1">
+	{$i18n.t('Knowledge')}
+</div>
 
 {#if filteredItems.length > 0 || query.startsWith('http')}
 	{#each filteredItems as item, idx}
-		{#if idx === 0 || item?.type !== items[idx - 1]?.type}
-			<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
-				{#if item?.type === 'folder'}
-					{$i18n.t('Folders')}
-				{:else if item?.type === 'collection'}
-					{$i18n.t('Collections')}
-				{:else if item?.type === 'file'}
-					{$i18n.t('Files')}
-				{/if}
-			</div>
-		{/if}
-
 		{#if !['youtube', 'web'].includes(item.type)}
 			<button
-				class="flex h-6 w-full items-center justify-between rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {idx ===
+				class=" px-2 py-1 rounded-xl w-full text-left flex justify-between items-center {idx ===
 				selectedIdx
-					? 'app-interactive-active selected-command-option-button'
+					? ' bg-gray-50 dark:bg-gray-800 dark:text-gray-100 selected-command-option-button'
 					: ''}"
 				type="button"
 				on:click={() => {
@@ -203,9 +214,8 @@
 				}}
 				data-selected={idx === selectedIdx}
 			>
-				<div class="flex w-full min-w-0 items-center gap-2">
+				<div class="  text-black dark:text-gray-100 flex items-center gap-1">
 					<Tooltip
-						className="app-icon-muted flex w-4 shrink-0 items-center justify-center"
 						content={item?.legacy
 							? $i18n.t('Legacy')
 							: item?.type === 'file'
@@ -216,20 +226,16 @@
 						placement="top"
 					>
 						{#if item?.type === 'collection'}
-							<Database className="size-3.5" />
+							<Database className="size-4" />
 						{:else if item?.type === 'folder'}
-							<Folder className="size-3.5" />
+							<Folder className="size-4" />
 						{:else}
-							<DocumentPage className="size-3.5" />
+							<DocumentPage className="size-4" />
 						{/if}
 					</Tooltip>
 
-					<Tooltip
-						className="min-w-0 flex-1"
-						content={`${decodeString(item?.name)}`}
-						placement="top-start"
-					>
-						<div class="min-w-0 flex-1 truncate">
+					<Tooltip content={`${decodeString(item?.name)}`} placement="top-start">
+						<div class="line-clamp-1 flex-1">
 							{decodeString(item?.name)}
 						</div>
 					</Tooltip>
@@ -238,15 +244,15 @@
 		{/if}
 	{/each}
 
-	{#if webUploadEnabled && isYoutubeUrl(query)}
+	{#if isYoutubeUrl(query)}
 		<button
-			class="flex h-6 w-full items-center rounded-xl app-interactive-active px-2 text-left text-[0.8125rem] transition-colors duration-75 selected-command-option-button"
+			class="px-2 py-1 rounded-xl w-full text-left bg-gray-50 dark:bg-gray-800 dark:text-gray-100 selected-command-option-button"
 			type="button"
-			data-selected={selectedIdx === filteredItems.findIndex((i) => i.type === 'youtube')}
+			data-selected={true}
 			on:click={() => {
 				if (isValidHttpUrl(query)) {
 					onSelect({
-						type: 'web',
+						type: 'youtube',
 						data: query
 					});
 				} else {
@@ -256,25 +262,21 @@
 				}
 			}}
 		>
-			<div class="flex w-full min-w-0 items-center gap-2">
-				<Tooltip
-					className="app-icon-muted flex w-4 shrink-0 items-center justify-center"
-					content={$i18n.t('YouTube')}
-					placement="top"
-				>
-					<Youtube className="size-3.5" />
+			<div class="  text-black dark:text-gray-100 line-clamp-1 flex items-center gap-1">
+				<Tooltip content={$i18n.t('YouTube')} placement="top">
+					<Youtube className="size-4" />
 				</Tooltip>
 
-				<div class="min-w-0 flex-1 truncate">
+				<div class="truncate flex-1">
 					{query}
 				</div>
 			</div>
 		</button>
-	{:else if webUploadEnabled && query.startsWith('http')}
+	{:else if query.startsWith('http')}
 		<button
-			class="flex h-6 w-full items-center rounded-xl app-interactive-active px-2 text-left text-[0.8125rem] transition-colors duration-75 selected-command-option-button"
+			class="px-2 py-1 rounded-xl w-full text-left bg-gray-50 dark:bg-gray-800 dark:text-gray-100 selected-command-option-button"
 			type="button"
-			data-selected={selectedIdx === filteredItems.findIndex((i) => i.type === 'web')}
+			data-selected={true}
 			on:click={() => {
 				if (isValidHttpUrl(query)) {
 					onSelect({
@@ -288,16 +290,12 @@
 				}
 			}}
 		>
-			<div class="flex w-full min-w-0 items-center gap-2">
-				<Tooltip
-					className="app-icon-muted flex w-4 shrink-0 items-center justify-center"
-					content={$i18n.t('Web')}
-					placement="top"
-				>
-					<GlobeAlt className="size-3.5" />
+			<div class="  text-black dark:text-gray-100 line-clamp-1 flex items-center gap-1">
+				<Tooltip content={$i18n.t('Web')} placement="top">
+					<GlobeAlt className="size-4" />
 				</Tooltip>
 
-				<div class="min-w-0 flex-1 truncate">
+				<div class="truncate flex-1">
 					{query}
 				</div>
 			</div>

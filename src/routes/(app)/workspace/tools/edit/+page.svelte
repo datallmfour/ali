@@ -20,9 +20,6 @@
 		const manifest = extractFrontmatter(data.content);
 		if (compareVersion(manifest?.required_open_webui_version ?? '0.0.0', WEBUI_VERSION)) {
 			console.log('Version is lower than required');
-			// LICENSE covers this Open WebUI wordmark.
-			// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-			// https://docs.openwebui.com/license.
 			toast.error(
 				$i18n.t(
 					'Open WebUI version (v{{OPEN_WEBUI_VERSION}}) is lower than required version (v{{REQUIRED_VERSION}})',
@@ -40,8 +37,7 @@
 			name: data.name,
 			meta: data.meta,
 			content: data.content,
-			commit_message: data.commit_message,
-			access_grants: data.access_grants
+			access_control: data.access_control
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
@@ -53,7 +49,6 @@
 
 			// await goto('/workspace/tools');
 		}
-		return res;
 	};
 
 	onMount(async () => {
@@ -61,42 +56,29 @@
 		const id = $page.url.searchParams.get('id');
 
 		if (id) {
-			const res = await getToolById(localStorage.token, id).catch((error) => {
+			tool = await getToolById(localStorage.token, id).catch((error) => {
 				toast.error(`${error}`);
 				goto('/workspace/tools');
 				return null;
 			});
 
-			if (res && !res.write_access) {
-				toast.error($i18n.t('You do not have permission to edit this tool'));
-				goto('/workspace/tools');
-				return;
-			}
-
-			if (res) {
-				tool = res;
-				console.log(tool);
-			}
+			console.log(tool);
 		}
 	});
 </script>
 
 {#if tool}
-	<div class="h-full min-w-0 overflow-x-hidden">
-		<ToolkitEditor
-			edit={true}
-			id={tool.id}
-			name={tool.name}
-			meta={tool.meta}
-			content={tool.content}
-			accessGrants={tool.access_grants ?? []}
-			version_id={tool.version_id}
-			onProduction={async () => {
-				tools.set(await getTools(localStorage.token));
-			}}
-			onSave={saveHandler}
-		/>
-	</div>
+	<ToolkitEditor
+		edit={true}
+		id={tool.id}
+		name={tool.name}
+		meta={tool.meta}
+		content={tool.content}
+		accessControl={tool.access_control}
+		onSave={(value) => {
+			saveHandler(value);
+		}}
+	/>
 {:else}
 	<div class="flex items-center justify-center h-full">
 		<div class=" pb-16">
