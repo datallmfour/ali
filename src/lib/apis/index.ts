@@ -1,34 +1,17 @@
-import { get } from 'svelte/store';
-import { selectedTerminalId, selectedFolder, chatId } from '$lib/stores';
-import { WEBUI_BASE_URL } from '$lib/constants';
+import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
+import { convertOpenApiToToolPayload } from '$lib/utils';
+import { getOpenAIModelsDirect } from './openai';
 
-// Let every request reach its destination,
-// and let those who wait receive an answer worthy of their patience.
+import { parse } from 'yaml';
+import { toast } from 'svelte-sonner';
+
 export const getModels = async (
 	token: string = '',
+	connections: object | null = null,
 	base: boolean = false,
-	refresh: boolean = false,
-	context?: { terminalId: string | null; chatId?: string | null; cwd?: string | null }
+	refresh: boolean = false
 ) => {
 	const searchParams = new URLSearchParams();
-	if (context === undefined) {
-		const terminalId = get(selectedTerminalId);
-		const currentChatId = get(chatId);
-		const folder = get(selectedFolder);
-		context = {
-			terminalId,
-			chatId: currentChatId,
-			cwd:
-				!currentChatId && folder?.data?.terminal_id === terminalId
-					? folder?.data?.working_directory
-					: null
-		};
-	}
-	if (!base && context.terminalId) {
-		searchParams.set('terminal_id', context.terminalId);
-		if (context.chatId) searchParams.set('chat_id', context.chatId);
-		if (context.cwd) searchParams.set('cwd', context.cwd);
-	}
 	if (refresh) {
 		searchParams.append('refresh', 'true');
 	}
@@ -59,49 +42,127 @@ export const getModels = async (
 		throw error;
 	}
 
-	return res?.data ?? [];
-};
+	let models = res?.data ?? [];
 
-export const unloadModel = async (token: string, model: string) => {
-	let error = null;
+	if (connections && !base) {
+		let localModels = [];
 
-	const res = await fetch(`${WEBUI_BASE_URL}/api/models/unload`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		},
-		body: JSON.stringify({ model })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			if ('detail' in err) {
-				error = err.detail;
-			} else {
-				error = err;
+		if (connections) {
+			const OPENAI_API_BASE_URLS = connections.OPENAI_API_BASE_URLS;
+			const OPENAI_API_KEYS = connections.OPENAI_API_KEYS;
+			const OPENAI_API_CONFIGS = connections.OPENAI_API_CONFIGS;
+
+			const requests = [];
+			for (const idx in OPENAI_API_BASE_URLS) {
+				const url = OPENAI_API_BASE_URLS[idx];
+
+				if (idx.toString() in OPENAI_API_CONFIGS) {
+					const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
+
+					const enable = apiConfig?.enable ?? true;
+					const modelIds = apiConfig?.model_ids ?? [];
+
+					if (enable) {
+						if (modelIds.length > 0) {
+							const modelList = {
+								object: 'list',
+								data: modelIds.map((modelId) => ({
+									id: modelId,
+									name: modelId,
+									owned_by: 'openai',
+									openai: { id: modelId },
+									urlIdx: idx
+								}))
+							};
+
+							requests.push(
+								(async () => {
+									return modelList;
+								})()
+							);
+						} else {
+							requests.push(
+								(async () => {
+									return await getOpenAIModelsDirect(url, OPENAI_API_KEYS[idx])
+										.then((res) => {
+											return res;
+										})
+										.catch((err) => {
+											return {
+												object: 'list',
+												data: [],
+												urlIdx: idx
+											};
+										});
+								})()
+							);
+						}
+					} else {
+						requests.push(
+							(async () => {
+								return {
+									object: 'list',
+									data: [],
+									urlIdx: idx
+								};
+							})()
+						);
+					}
+				}
 			}
-			return null;
-		});
 
-	if (error) {
-		throw error;
+			const responses = await Promise.all(requests);
+
+			for (const idx in responses) {
+				const response = responses[idx];
+				const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
+
+				let models = Array.isArray(response) ? response : (response?.data ?? []);
+				models = models.map((model) => ({ ...model, openai: { id: model.id }, urlIdx: idx }));
+
+				const prefixId = apiConfig.prefix_id;
+				if (prefixId) {
+					for (const model of models) {
+						model.id = `${prefixId}.${model.id}`;
+					}
+				}
+
+				const tags = apiConfig.tags;
+				if (tags) {
+					for (const model of models) {
+						model.tags = tags;
+					}
+				}
+
+				localModels = localModels.concat(models);
+			}
+		}
+
+		models = models.concat(
+			localModels.map((model) => ({
+				...model,
+				name: model?.name ?? model?.id,
+				direct: true
+			}))
+		);
+
+		// Remove duplicates
+		const modelsMap = {};
+		for (const model of models) {
+			modelsMap[model.id] = model;
+		}
+
+		models = Object.values(modelsMap);
 	}
 
-	return res;
+	return models;
 };
 
 type ChatCompletedForm = {
 	model: string;
-	messages: Record<string, unknown>[];
+	messages: string[];
 	chat_id: string;
-	session_id: string | undefined;
-	id: string;
-	filter_ids?: string[];
+	session_id: string;
 };
 
 export const chatCompleted = async (token: string, body: ChatCompletedForm) => {
@@ -208,43 +269,10 @@ export const stopTask = async (token: string, id: string) => {
 	return res;
 };
 
-export const stopTasksByChatId = async (token: string, chat_id: string) => {
+export const getTaskIdsByChatId = async (token: string, chat_id: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${encodeURIComponent(chat_id)}/stop`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			if ('detail' in err) {
-				error = err.detail;
-			} else {
-				error = err;
-			}
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const getTaskIdsByChatId = async (token: string, chat_id: string, signal?: AbortSignal) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${encodeURIComponent(chat_id)}`, {
-		signal,
+	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${chat_id}`, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -257,7 +285,6 @@ export const getTaskIdsByChatId = async (token: string, chat_id: string, signal?
 			return res.json();
 		})
 		.catch((err) => {
-			if (signal?.aborted) return null;
 			console.error(err);
 			if ('detail' in err) {
 				error = err.detail;
@@ -274,14 +301,232 @@ export const getTaskIdsByChatId = async (token: string, chat_id: string, signal?
 	return res;
 };
 
-export const resumeTemporaryChat = async (token: string, chatId: string, sessionId: string) => {
-	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${encodeURIComponent(chatId)}/resume`, {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ session_id: sessionId })
-	});
-	if (!res.ok) throw await res.json();
-	return res.json();
+export const getToolServerData = async (token: string, url: string) => {
+	let error = null;
+
+	const res = await fetch(`${url}`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	})
+		.then(async (res) => {
+			// Check if URL ends with .yaml or .yml to determine format
+			if (url.toLowerCase().endsWith('.yaml') || url.toLowerCase().endsWith('.yml')) {
+				if (!res.ok) throw await res.text();
+				const text = await res.text();
+				return parse(text);
+			} else {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			}
+		})
+		.catch((err) => {
+			console.error(err);
+			if ('detail' in err) {
+				error = err.detail;
+			} else {
+				error = err;
+			}
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	console.log(res);
+	return res;
+};
+
+export const getToolServersData = async (servers: object[]) => {
+	return (
+		await Promise.all(
+			servers
+				.filter((server) => server?.config?.enable)
+				.map(async (server) => {
+					let error = null;
+
+					let toolServerToken = null;
+
+					const auth_type = server?.auth_type ?? 'bearer';
+					if (auth_type === 'bearer') {
+						toolServerToken = server?.key;
+					} else if (auth_type === 'none') {
+						// No authentication
+					} else if (auth_type === 'session') {
+						toolServerToken = localStorage.token;
+					}
+
+					let res = null;
+					const specType = server?.spec_type ?? 'url';
+
+					if (specType === 'url') {
+						res = await getToolServerData(
+							toolServerToken,
+							(server?.path ?? '').includes('://')
+								? server?.path
+								: `${server?.url}${(server?.path ?? '').startsWith('/') ? '' : '/'}${server?.path}`
+						).catch((err) => {
+							error = err;
+							return null;
+						});
+					} else if ((specType === 'json' && server?.spec) ?? null) {
+						try {
+							res = JSON.parse(server?.spec);
+						} catch (e) {
+							error = 'Failed to parse JSON spec';
+						}
+					}
+
+					if (res) {
+						const { openapi, info, specs } = {
+							openapi: res,
+							info: res.info,
+							specs: convertOpenApiToToolPayload(res)
+						};
+
+						return {
+							url: server?.url,
+							openapi: openapi,
+							info: info,
+							specs: specs
+						};
+					} else if (error) {
+						return {
+							error,
+							url: server?.url
+						};
+					} else {
+						return null;
+					}
+				})
+		)
+	).filter((server) => server);
+};
+
+export const executeToolServer = async (
+	token: string,
+	url: string,
+	name: string,
+	params: Record<string, any>,
+	serverData: { openapi: any; info: any; specs: any }
+) => {
+	let error = null;
+
+	try {
+		// Find the matching operationId in the OpenAPI spec
+		const matchingRoute = Object.entries(serverData.openapi.paths).find(([_, methods]) =>
+			Object.entries(methods as any).some(([__, operation]: any) => operation.operationId === name)
+		);
+
+		if (!matchingRoute) {
+			throw new Error(`No matching route found for operationId: ${name}`);
+		}
+
+		const [routePath, methods] = matchingRoute;
+
+		const methodEntry = Object.entries(methods as any).find(
+			([_, operation]: any) => operation.operationId === name
+		);
+
+		if (!methodEntry) {
+			throw new Error(`No matching method found for operationId: ${name}`);
+		}
+
+		const [httpMethod, operation]: [string, any] = methodEntry;
+
+		// Split parameters by type
+		const pathParams: Record<string, any> = {};
+		const queryParams: Record<string, any> = {};
+		let bodyParams: any = {};
+
+		if (operation.parameters) {
+			operation.parameters.forEach((param: any) => {
+				const paramName = param.name;
+				const paramIn = param.in;
+				if (params.hasOwnProperty(paramName)) {
+					if (paramIn === 'path') {
+						pathParams[paramName] = params[paramName];
+					} else if (paramIn === 'query') {
+						queryParams[paramName] = params[paramName];
+					}
+				}
+			});
+		}
+
+		let finalUrl = `${url}${routePath}`;
+
+		// Replace path parameters (`{param}`)
+		Object.entries(pathParams).forEach(([key, value]) => {
+			finalUrl = finalUrl.replace(new RegExp(`{${key}}`, 'g'), encodeURIComponent(value));
+		});
+
+		// Append query parameters to URL if any
+		if (Object.keys(queryParams).length > 0) {
+			const queryString = new URLSearchParams(
+				Object.entries(queryParams).map(([k, v]) => [k, String(v)])
+			).toString();
+			finalUrl += `?${queryString}`;
+		}
+
+		// Handle requestBody composite
+		if (operation.requestBody && operation.requestBody.content) {
+			const contentType = Object.keys(operation.requestBody.content)[0];
+			if (params !== undefined) {
+				bodyParams = params;
+			} else {
+				// Optional: Fallback or explicit error if body is expected but not provided
+				throw new Error(`Request body expected for operation '${name}' but none found.`);
+			}
+		}
+
+		// Prepare headers and request options
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		};
+
+		const requestOptions: RequestInit = {
+			method: httpMethod.toUpperCase(),
+			headers
+		};
+
+		if (
+			['post', 'put', 'patch', 'delete'].includes(httpMethod.toLowerCase()) &&
+			operation.requestBody
+		) {
+			requestOptions.body = JSON.stringify(bodyParams);
+		}
+
+		const res = await fetch(finalUrl, requestOptions);
+		if (!res.ok) {
+			const resText = await res.text();
+			throw new Error(`HTTP error! Status: ${res.status}. Message: ${resText}`);
+		}
+
+		// make a clone of res and extract headers
+		const responseHeaders = {};
+		res.headers.forEach((value, key) => {
+			responseHeaders[key] = value;
+		});
+
+		const text = await res.text();
+		let responseData;
+
+		try {
+			responseData = JSON.parse(text);
+		} catch {
+			responseData = text;
+		}
+		return [responseData, responseHeaders];
+	} catch (err: any) {
+		error = err.message;
+		console.error('API Request Error:', error);
+		return [{ error }, null];
+	}
 };
 
 export const getTaskConfig = async (token: string = '') => {
@@ -417,10 +662,82 @@ export const generateTitle = async (
 	}
 };
 
+export const generateFollowUps = async (
+	token: string = '',
+	model: string,
+	messages: string,
+	chat_id?: string
+) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_BASE_URL}/api/v1/tasks/follow_ups/completions`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			model: model,
+			messages: messages,
+			...(chat_id && { chat_id: chat_id })
+		})
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			console.error(err);
+			if ('detail' in err) {
+				error = err.detail;
+			}
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	try {
+		// Step 1: Safely extract the response string
+		const response = res?.choices[0]?.message?.content ?? '';
+
+		// Step 2: Attempt to fix common JSON format issues like single quotes
+		const sanitizedResponse = response.replace(/['‘’`]/g, '"'); // Convert single quotes to double quotes for valid JSON
+
+		// Step 3: Find the relevant JSON block within the response
+		const jsonStartIndex = sanitizedResponse.indexOf('{');
+		const jsonEndIndex = sanitizedResponse.lastIndexOf('}');
+
+		// Step 4: Check if we found a valid JSON block (with both `{` and `}`)
+		if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
+			const jsonResponse = sanitizedResponse.substring(jsonStartIndex, jsonEndIndex + 1);
+
+			// Step 5: Parse the JSON block
+			const parsed = JSON.parse(jsonResponse);
+
+			// Step 6: If there's a "follow_ups" key, return the follow_ups array; otherwise, return an empty array
+			if (parsed && parsed.follow_ups) {
+				return Array.isArray(parsed.follow_ups) ? parsed.follow_ups : [];
+			} else {
+				return [];
+			}
+		}
+
+		// If no valid JSON block found, return an empty array
+		return [];
+	} catch (e) {
+		// Catch and safely return empty array on any parsing errors
+		console.error('Failed to parse response: ', e);
+		return [];
+	}
+};
+
 export const generateTags = async (
 	token: string = '',
 	model: string,
-	messages: object[],
+	messages: string,
 	chat_id?: string
 ) => {
 	let error = null;
@@ -526,7 +843,7 @@ export const generateEmoji = async (
 		throw error;
 	}
 
-	const response = res?.choices[0]?.message?.content?.replace(/["']/g, '') ?? null;
+	const response = res?.choices[0]?.message?.content.replace(/["']/g, '') ?? null;
 
 	if (response) {
 		if (/\p{Extended_Pictographic}/u.test(response)) {
@@ -542,8 +859,7 @@ export const generateQueries = async (
 	model: string,
 	messages: object[],
 	prompt: string,
-	type: string = 'web_search',
-	chat_id?: string
+	type: string = 'web_search'
 ) => {
 	let error = null;
 
@@ -558,8 +874,7 @@ export const generateQueries = async (
 			model: model,
 			messages: messages,
 			prompt: prompt,
-			type: type,
-			...(chat_id && { chat_id: chat_id })
+			type: type
 		})
 	})
 		.then(async (res) => {
@@ -613,8 +928,7 @@ export const generateAutoCompletion = async (
 	model: string,
 	prompt: string,
 	messages?: object[],
-	type: string = 'search query',
-	chat_id?: string
+	type: string = 'search query'
 ) => {
 	const controller = new AbortController();
 	let error = null;
@@ -632,8 +946,7 @@ export const generateAutoCompletion = async (
 			prompt: prompt,
 			...(messages && { messages: messages }),
 			type: type,
-			stream: false,
-			...(chat_id && { chat_id: chat_id })
+			stream: false
 		})
 	})
 		.then(async (res) => {
@@ -652,7 +965,7 @@ export const generateAutoCompletion = async (
 		throw error;
 	}
 
-	const response = res?.choices?.[0]?.message?.content ?? '';
+	const response = res?.choices[0]?.message?.content ?? '';
 
 	try {
 		const jsonStartIndex = response.indexOf('{');
@@ -1035,15 +1348,14 @@ export const getUsage = async (token: string = '') => {
 	return res;
 };
 
-export const getBackendConfig = async (token: string = '') => {
+export const getBackendConfig = async () => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_BASE_URL}/api/config`, {
 		method: 'GET',
 		credentials: 'include',
 		headers: {
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
+			'Content-Type': 'application/json'
 		}
 	})
 		.then(async (res) => {
@@ -1057,32 +1369,6 @@ export const getBackendConfig = async (token: string = '') => {
 		});
 
 	if (error) {
-		// When a forward-auth proxy (e.g. Authentik/Traefik) intercepts the
-		// request and redirects to an external login page, the browser blocks
-		// the cross-origin redirect for fetch() and throws a TypeError.
-		// Detect this by re-fetching with redirect:"manual" — if the server
-		// responded with a redirect, the probe returns an opaque redirect
-		// response instead of throwing, confirming the backend is alive but
-		// an auth proxy is intercepting.
-		if (error instanceof TypeError) {
-			try {
-				const probeRes = await fetch(`${WEBUI_BASE_URL}/api/config`, {
-					method: 'GET',
-					credentials: 'include',
-					redirect: 'manual',
-					headers: { 'Content-Type': 'application/json' }
-				});
-				if (
-					probeRes.type === 'opaqueredirect' ||
-					(probeRes.status >= 300 && probeRes.status < 400)
-				) {
-					throw { authRedirect: true };
-				}
-			} catch (probeErr: any) {
-				if (probeErr?.authRedirect) throw probeErr;
-				// Probe also failed — genuine network/backend issue
-			}
-		}
 		throw error;
 	}
 
@@ -1169,34 +1455,10 @@ export const getVersionUpdates = async (token: string) => {
 	return res;
 };
 
-export type EventCatalogItem = {
-	event: string;
-	description: string;
-	message: string;
-};
-
-export type EventWebhookTarget = {
-	type: 'user' | 'group';
-	id: string;
-};
-
-export type EventWebhook = {
-	id: string;
-	name: string;
-	url: string;
-	enabled: boolean;
-	events: string[];
-	targets: EventWebhookTarget[] | null;
-	created_at?: number;
-	updated_at?: number;
-};
-
-export const getEvents = async (
-	token: string
-): Promise<{ schema: string; events: EventCatalogItem[] }> => {
+export const getModelFilterConfig = async (token: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_BASE_URL}/api/events`, {
+	const res = await fetch(`${WEBUI_BASE_URL}/api/config/model/filter`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',
@@ -1220,46 +1482,23 @@ export const getEvents = async (
 	return res;
 };
 
-export const getEventWebhooks = async (token: string): Promise<EventWebhook[]> => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_BASE_URL}/api/events/webhooks`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const createEventWebhook = async (
+export const updateModelFilterConfig = async (
 	token: string,
-	webhook: Partial<EventWebhook>
-): Promise<EventWebhook> => {
+	enabled: boolean,
+	models: string[]
+) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_BASE_URL}/api/events/webhooks`, {
+	const res = await fetch(`${WEBUI_BASE_URL}/api/config/model/filter`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify(webhook)
+		body: JSON.stringify({
+			enabled: enabled,
+			models: models
+		})
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -1278,20 +1517,45 @@ export const createEventWebhook = async (
 	return res;
 };
 
-export const updateEventWebhook = async (
-	token: string,
-	id: string,
-	webhook: Partial<EventWebhook>
-): Promise<EventWebhook> => {
+export const getWebhookUrl = async (token: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_BASE_URL}/api/events/webhooks/${id}`, {
-		method: 'PUT',
+	const res = await fetch(`${WEBUI_BASE_URL}/api/webhook`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			console.error(err);
+			error = err;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res.url;
+};
+
+export const updateWebhookUrl = async (token: string, url: string) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_BASE_URL}/api/webhook`, {
+		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify(webhook)
+		body: JSON.stringify({
+			url: url
+		})
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -1307,14 +1571,14 @@ export const updateEventWebhook = async (
 		throw error;
 	}
 
-	return res;
+	return res.url;
 };
 
-export const deleteEventWebhook = async (token: string, id: string) => {
+export const getCommunitySharingEnabledStatus = async (token: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_BASE_URL}/api/events/webhooks/${id}`, {
-		method: 'DELETE',
+	const res = await fetch(`${WEBUI_BASE_URL}/api/community_sharing`, {
+		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`
@@ -1335,6 +1599,60 @@ export const deleteEventWebhook = async (token: string, id: string) => {
 	}
 
 	return res;
+};
+
+export const toggleCommunitySharingEnabledStatus = async (token: string) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_BASE_URL}/api/community_sharing/toggle`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			console.error(err);
+			error = err.detail;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const getModelConfig = async (token: string): Promise<GlobalModelConfig> => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_BASE_URL}/api/config/models`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			console.error(err);
+			error = err;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res.models;
 };
 
 export interface ModelConfig {
@@ -1346,25 +1664,42 @@ export interface ModelConfig {
 }
 
 export interface ModelMeta {
-	voice_avatar?: import('$lib/utils/voice-avatar').VoiceAvatarConfig | null;
-	voice?: { voice?: string };
 	toolIds: never[];
 	description?: string;
-	i18n?: Record<string, Record<string, any>>;
-	hidden?: boolean;
 	capabilities?: object;
 	profile_image_url?: string;
-	background_image_url?: string | null;
 }
 
-export interface ModelControl {
-	display?: 'menu' | 'slider';
-	label: string;
-	description?: string;
-	default?: string | null;
-	options: Record<string, { label: string; params?: Record<string, any> }>;
-}
+export interface ModelParams {}
 
-export interface ModelParams {
-	model_controls?: Record<string, ModelControl>;
-}
+export type GlobalModelConfig = ModelConfig[];
+
+export const updateModelConfig = async (token: string, config: GlobalModelConfig) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_BASE_URL}/api/config/models`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			models: config
+		})
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			console.error(err);
+			error = err;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};

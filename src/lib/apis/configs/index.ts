@@ -1,24 +1,7 @@
 import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 import type { Banner } from '$lib/types';
-import type { Visibility } from '$lib/utils/ui-visibility';
 
-export const setInterfaceVisibility = async (
-	token: string,
-	visibility: Visibility
-): Promise<Visibility> => {
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/interface/visibility`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({ visibility })
-	});
-	if (!res.ok) throw (await res.json()).detail;
-	return (await res.json()).visibility;
-};
-
-export const importConfig = async (token: string, config: object) => {
+export const importConfig = async (token: string, config) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/import`, {
@@ -189,97 +172,6 @@ export const setToolServerConnections = async (token: string, connections: objec
 	return res;
 };
 
-export const getTerminalServerConnections = async (token: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/terminal_servers`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const setTerminalServerConnections = async (token: string, connections: object) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/terminal_servers`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({
-			...connections
-		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-/**
- * Verify a terminal server connection via the backend proxy.
- * Used for system/admin connections to avoid CORS issues and API key exposure.
- */
-export const verifyTerminalServerConnection = async (token: string, connection: object) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/terminal_servers/verify`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({
-			...connection
-		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
 export const verifyToolServerConnection = async (token: string, connection: object) => {
 	let error = null;
 
@@ -314,9 +206,6 @@ type RegisterOAuthClientForm = {
 	url: string;
 	client_id: string;
 	client_name?: string;
-	client_secret?: string;
-	oauth_server_url?: string;
-	oauth_scope?: string;
 };
 
 export const registerOAuthClient = async (
@@ -359,17 +248,6 @@ export const getOAuthClientAuthorizationUrl = (clientId: string, type: null | st
 	return `${WEBUI_BASE_URL}/oauth/clients/${oauthClientId}/authorize`;
 };
 
-export const initiateOAuthRedirect = (tool: {
-	id: string;
-	serverId: string;
-	authType?: string | null;
-}) => {
-	sessionStorage.setItem('pendingOAuthToolId', tool.id);
-	sessionStorage.setItem('oauthRedirectInProgressToolId', tool.id);
-	const authUrl = getOAuthClientAuthorizationUrl(tool.serverId, tool.authType ?? 'mcp');
-	window.open(authUrl, '_self', 'noopener');
-};
-
 export const getCodeExecutionConfig = async (token: string) => {
 	let error = null;
 
@@ -409,33 +287,6 @@ export const setCodeExecutionConfig = async (token: string, config: object) => {
 		body: JSON.stringify({
 			...config
 		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const getModelsDefaults = async (token: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/models/defaults`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -511,36 +362,7 @@ export const setModelsConfig = async (token: string, config: object) => {
 	return res;
 };
 
-export const getSubagentsConfig = async (token: string) => {
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/subagents`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	});
-	if (!res.ok) throw await res.json();
-	return res.json();
-};
-
-export const setSubagentsConfig = async (token: string, config: object) => {
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/subagents`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(config)
-	});
-	if (!res.ok) throw await res.json();
-	return res.json();
-};
-
-export const setDefaultPromptSuggestions = async (
-	token: string,
-	promptSuggestions: any[] | null,
-	promptSuggestionsI18n: Record<string, any> = {}
-) => {
+export const setDefaultPromptSuggestions = async (token: string, promptSuggestions: string) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/suggestions`, {
@@ -550,8 +372,7 @@ export const setDefaultPromptSuggestions = async (
 			Authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			suggestions: promptSuggestions,
-			i18n: promptSuggestionsI18n
+			suggestions: promptSuggestions
 		})
 	})
 		.then(async (res) => {

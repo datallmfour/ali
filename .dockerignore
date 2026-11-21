@@ -18,6 +18,3 @@ uploads
 **/*.db
 _test
 backend/data/*
-
-.venv
-.git
